@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.doom.perspective</groupId>
+    <artifactId>doom-perspective-parent</artifactId>
+    <version>0.9.0</version>
+    <packaging>pom</packaging>
+
+    <name>DOOM Perspective Module</name>
+    <description>DOOM game engine for Ignition Perspective</description>
+
+    <properties>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <ignition.version>8.3.1</ignition.version>
+    </properties>
+
+    <modules>
+        <module>common</module>
+        <module>gateway</module>
+    </modules>
+
+    <repositories>
+        <repository>
+            <id>releases</id>
+            <url>https://nexus.inductiveautomation.com/repository/inductiveautomation-releases</url>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Ignition SDK -->
+            <dependency>
+                <groupId>com.inductiveautomation.ignitionsdk</groupId>
+                <artifactId>ignition-common</artifactId>
+                <version>${ignition.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.inductiveautomation.ignitionsdk</groupId>
+                <artifactId>gateway-api</artifactId>
+                <version>${ignition.version}</version>
+                <scope>provided</scope>
+            </dependency>
+
+            <!-- Jakarta Servlet API (provided by Ignition gateway at runtime) -->
+            <dependency>
+                <groupId>jakarta.servlet</groupId>
+                <artifactId>jakarta.servlet-api</artifactId>
+                <version>5.0.0</version>
+                <scope>provided</scope>
+            </dependency>
+
+            <!-- Logging -->
+            <dependency>
+                <groupId>org.slf4j</groupId>
+                <artifactId>slf4j-api</artifactId>
+                <version>1.7.36</version>
+                <scope>provided</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+</project>

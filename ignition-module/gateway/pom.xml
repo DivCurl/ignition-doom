@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+         http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.doom.perspective</groupId>
+        <artifactId>doom-perspective-parent</artifactId>
+        <version>0.9.0</version>
+    </parent>
+
+    <artifactId>doom-perspective-gateway</artifactId>
+    <packaging>jar</packaging>
+
+    <name>DOOM Perspective - Gateway</name>
+
+    <dependencies>
+        <!-- Common module -->
+        <dependency>
+            <groupId>com.doom.perspective</groupId>
+            <artifactId>doom-perspective-common</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- Headless renderer — PROVIDED scope only.
+             Phase 5.2: gateway.jar must NOT reference engine classes directly.
+             The JAR is in the .modl so it is available at runtime (loaded by
+             SessionClassLoader child CL per session), but gateway code must never
+             import mochadoom.*, doom.*, etc. Having it provided here lets the
+             build succeed if any accidental import slips in, but we verify at
+             runtime that all engine access goes through ISessionRunner. -->
+        <dependency>
+            <groupId>com.doom.perspective</groupId>
+            <artifactId>headless-renderer</artifactId>
+            <version>${project.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Ignition SDK -->
+        <dependency>
+            <groupId>com.inductiveautomation.ignitionsdk</groupId>
+            <artifactId>ignition-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.inductiveautomation.ignitionsdk</groupId>
+            <artifactId>gateway-api</artifactId>
+        </dependency>
+
+        <!-- Jakarta Servlet API -->
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+        </dependency>
+
+        <!-- Logging -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>gateway</finalName>
+    </build>
+</project>

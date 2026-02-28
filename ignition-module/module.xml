@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<modules>
+    <module>
+        <id>com.doom.perspective</id>
+        <name>Ignition DOOM (Perspective)</name>
+        <description>DOOM game engine running in Ignition Perspective</description>
+        <vendor>Mike Dillmann (DivCurl)</vendor>
+        <vendorName>Mike Dillmann (DivCurl)</vendorName>
+        <version>0.9.0</version>
+        <requiredIgnitionVersion>8.3.1</requiredIgnitionVersion>
+
+        <requiredFrameworkVersion>8</requiredFrameworkVersion>
+
+        <jar scope="GCD">gateway.jar</jar>
+        <jar scope="GCD">common.jar</jar>
+        <jar scope="GCD">headless-renderer.jar</jar>
+
+        <hook scope="G">com.doom.gateway.GatewayHook</hook>
+    </module>
+</modules>

@@ -1,0 +1,348 @@
+package com.doom.gateway;
+
+/**
+ * Generates the HTML for the DOOM session landing page served at /system/doom/.
+ *
+ * <p>The page lets users start single-player or deathmatch sessions and view active sessions.
+ * All live data is fetched client-side from /system/doom/health via JS polling — no separate
+ * data endpoint is needed. Branding images are served from /system/doom/branding/{file} and
+ * fail silently via onerror if the branding directory has not been populated.
+ */
+public class DoomLandingPage {
+
+    public static String getHTML(String version, java.util.List<String> brandingFiles) {
+        // Build branding <img> tags from the server-side file list
+        StringBuilder brandImgHtml = new StringBuilder();
+        for (String bf : brandingFiles) {
+            brandImgHtml.append("    <img class='branding-logo'")
+                        .append(" src='/system/doom/branding/").append(bf).append("'")
+                        .append(" alt='' onerror='this.style.display=&quot;none&quot;;checkBrandingEmpty()'>\n");
+        }
+        int brandTotal = brandingFiles.size();
+        String brandingRow = brandTotal > 0
+            ? "  <div class='branding-row' id='brandingRow'>\n" + brandImgHtml + "  </div>\n"
+            : "";
+
+        return "<!DOCTYPE html><html lang='en'>\n"
+            + "<head><meta charset='UTF-8'>"
+            + "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            + "<title>Ignition DOOM</title>\n"
+            + "<style>\n"
+            + "* { box-sizing: border-box; margin: 0; padding: 0; }\n"
+            + "body { background: #0d0d0d; color: #c8c8c8; font-family: 'Courier New', monospace; padding: 24px; min-height: 100vh; }\n"
+
+            // Header
+            + ".header { border-bottom: 1px solid #333; padding-bottom: 14px; margin-bottom: 8px; }\n"
+            + ".header-row { display: flex; align-items: center; gap: 18px; }\n"
+            + ".header-logo { height: 110px; width: auto; border-radius: 3px; opacity: 0.92; }\n"
+            + ".header-text { display: flex; flex-direction: column; justify-content: center; gap: 6px; }\n"
+            + ".header-title { color: #ff4444; font-size: 28px; font-weight: bold; text-transform: uppercase; letter-spacing: 6px; line-height: 1; }\n"
+            + ".header-desc { color: #888; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; }\n"
+
+            // Branding row
+            + ".branding-row { display: flex; align-items: center; gap: 32px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #1e1e1e; min-height: 0; }\n"
+            + ".branding-logo { height: 26px; width: auto; opacity: 0.55; }\n"
+            + ".branding-sep { color: #333; }\n"
+
+            // Stats bar
+            + ".stats-bar { display: flex; align-items: center; flex-wrap: wrap; color: #999; font-size: 12px; margin: 10px 0 22px 0; }\n"
+            + ".stats-bar .sep { margin: 0 10px; color: #444; }\n"
+            + ".stat-engines.full .used { color: #ff4444; }\n"
+            + ".stat-links { margin-left: auto; display: flex; gap: 14px; }\n"
+            + ".stat-link { color: #666; font-size: 11px; text-decoration: none; letter-spacing: 1px; text-transform: uppercase; }\n"
+            + ".stat-link:hover { color: #aaa; }\n"
+
+            // Cap warning
+            + ".cap-warning { background: #1a0a00; border: 1px solid #663300; color: #ff8844; padding: 9px 16px; font-size: 12px; margin-bottom: 18px; letter-spacing: 1px; }\n"
+            + ".cap-warning.hidden { display: none; }\n"
+
+            // Action cards
+            + ".cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 32px; }\n"
+            + "@media (max-width: 640px) { .cards { grid-template-columns: 1fr; } }\n"
+            + ".card { background: #111; border: 1px solid #2a2a2a; padding: 20px 22px; }\n"
+            + ".card.disabled { opacity: 0.45; pointer-events: none; }\n"
+            + ".card-title { color: #ff4444; font-size: 13px; font-weight: bold; text-transform: uppercase; letter-spacing: 3px; margin-bottom: 18px; padding-bottom: 10px; border-bottom: 1px solid #2a2a2a; }\n"
+            + ".field { margin-bottom: 14px; }\n"
+            + ".field label { display: block; color: #888; font-size: 10px; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 6px; }\n"
+            + ".select-wrap { position: relative; }\n"
+            + ".select-wrap::after { content: '\\25BE'; position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: #666; pointer-events: none; font-size: 12px; }\n"
+            + "select { background: #0d0d0d; border: 1px solid #383838; color: #c8c8c8; font-family: 'Courier New', monospace; font-size: 13px; padding: 7px 10px; width: 100%; appearance: none; -webkit-appearance: none; cursor: pointer; outline: none; }\n"
+            + "select:focus { border-color: #ff4444; }\n"
+            + "select option { background: #111; }\n"
+            + ".btn { display: block; width: 100%; background: #7a0000; color: #ffcccc; border: 1px solid #cc0000; font-family: 'Courier New', monospace; font-size: 12px; font-weight: bold; text-transform: uppercase; letter-spacing: 3px; padding: 10px 0; cursor: pointer; margin-top: 18px; outline: none; }\n"
+            + ".btn:hover { background: #cc0000; color: #fff; }\n"
+            + ".btn:disabled { opacity: 0.4; cursor: not-allowed; }\n"
+
+            // Sections
+            + ".section-header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }\n"
+            + ".section-title { color: #ff4444; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 3px; }\n"
+            + ".section-count { color: #555; font-size: 11px; }\n"
+
+            // Tables
+            + "table { border-collapse: collapse; width: 100%; margin-bottom: 28px; }\n"
+            + "th { color: #ff4444; text-align: left; padding: 7px 14px; border-bottom: 2px solid #ff4444; text-transform: uppercase; letter-spacing: 2px; font-size: 10px; }\n"
+            + "td { padding: 8px 14px; border-bottom: 1px solid #1c1c1c; font-size: 12px; vertical-align: middle; }\n"
+            + "tr:hover td { background: #131313; }\n"
+            + ".empty-row td { color: #444; padding: 20px 14px; text-align: center; }\n"
+            + "tr:hover.empty-row td { background: transparent; }\n"
+
+            // Cell types
+            + ".cell-id { color: #6688bb; font-size: 11px; cursor: pointer; user-select: all; }\n"
+            + ".cell-id:hover { color: #88aadd; }\n"
+            + ".cell-wad { color: #ffcc00; }\n"
+            + ".cell-time { color: #aaa; }\n"
+            + ".cell-status-running { color: #44cc44; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }\n"
+            + ".cell-status-lobby { color: #ffaa00; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }\n"
+            + ".cell-players .joined { color: #44cc44; }\n"
+            + ".cell-players .waiting { color: #ffaa00; }\n"
+            + ".join-link { background: #003300; color: #88ee88; border: 1px solid #006600; padding: 4px 12px; text-decoration: none; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; white-space: nowrap; }\n"
+            + ".join-link:hover { background: #004400; color: #aaffaa; }\n"
+            + ".join-link.full { background: #1a1a1a; color: #555; border-color: #333; pointer-events: none; }\n"
+
+            // Footer
+            + ".footer { border-top: 1px solid #1a1a1a; padding-top: 14px; margin-top: 8px; }\n"
+            + ".footer-note { color: #333; font-size: 10px; letter-spacing: 1px; }\n"
+
+            // Copy flash
+            + ".copied-flash { color: #44cc44; font-size: 10px; margin-left: 6px; opacity: 0; transition: opacity 0.2s; }\n"
+            + ".copied-flash.show { opacity: 1; }\n"
+            + "</style></head>\n"
+            + "<body>\n"
+
+            // ── Header
+            + "<div class='header'>\n"
+            + "  <div class='header-row'>\n"
+            + "    <img class='header-logo' src='/system/doom/static/doom-logo.png' alt='DOOM'>\n"
+            + "    <div class='header-text'>\n"
+            + "      <div class='header-title'>Ignition DOOM</div>\n"
+            + "      <div class='header-desc'>Perspective Gateway Module &nbsp;&middot;&nbsp; v" + version + "</div>\n"
+            + "    </div>\n"
+            + "  </div>\n"
+            // Branding row — dynamically populated from server-side file list; omitted if empty
+            + brandingRow
+            + "</div>\n"
+
+            // ── Stats bar
+            + "<div class='stats-bar'>\n"
+            + "  <span class='stat-engines' id='engineStat'>"
+            + "Engines: <span class='used' id='usedEngines'>—</span><span style='color:#666'> / 4</span></span>\n"
+            + "  <span class='sep'>|</span>\n"
+            + "  <span id='uptimeStat'>Uptime: —</span>\n"
+            + "  <span class='stat-links'>\n"
+            + "    <a class='stat-link' href='#' id='refreshLink'>[Refresh]</a>\n"
+            + "  </span>\n"
+            + "</div>\n"
+
+            // ── Cap warning
+            + "<div class='cap-warning hidden' id='capWarning'>\n"
+            + "  &#x26A0; All engine slots are in use (4 / 4). Stop an existing session before starting a new one.\n"
+            + "</div>\n"
+
+            // ── Action cards
+            + "<div class='cards'>\n"
+            + "  <div class='card' id='spCard'>\n"
+            + "    <div class='card-title'>Single Player</div>\n"
+            + "    <div class='field'><label>WAD / Game</label>"
+            + "<div class='select-wrap'><select id='spWad'></select></div></div>\n"
+            + "    <div class='field' id='spPwadField' style='display:none'><label>PWAD / Mod</label>"
+            + "<div class='select-wrap'><select id='spPwad'><option value=''>\u2014 None \u2014</option></select></div></div>\n"
+            + "    <button class='btn' id='spBtn' onclick='startSinglePlayer()'>&#9654; Start Game</button>\n"
+            + "  </div>\n"
+            + "  <div class='card' id='dmCard'>\n"
+            + "    <div class='card-title'>Deathmatch</div>\n"
+            + "    <div class='field'><label>WAD / Game</label>"
+            + "<div class='select-wrap'><select id='dmWad'></select></div></div>\n"
+            + "    <div class='field' id='dmPwadField' style='display:none'><label>PWAD / Mod</label>"
+            + "<div class='select-wrap'><select id='dmPwad'><option value=''>\u2014 None \u2014</option></select></div></div>\n"
+            + "    <div class='field'><label>Number of Players</label>"
+            + "<div class='select-wrap'><select id='dmPlayers'>"
+            + "<option value='2'>2 Players</option>"
+            + "<option value='3'>3 Players</option>"
+            + "<option value='4'>4 Players</option>"
+            + "</select></div></div>\n"
+            + "    <button class='btn' id='dmBtn' onclick='createMatch()'>&#9760; Create Match</button>\n"
+            + "  </div>\n"
+            + "</div>\n"
+
+            // ── Active Sessions table
+            + "<div class='section-header'>"
+            + "<span class='section-title'>Active Sessions</span>"
+            + "<span class='section-count' id='sessionCount'></span>"
+            + "</div>\n"
+            + "<table><thead><tr>"
+            + "<th>Session ID</th><th>WAD</th><th>Active</th><th>Status</th>"
+            + "</tr></thead><tbody id='sessionTbody'>"
+            + "<tr class='empty-row'><td colspan='4'>Loading\u2026</td></tr>"
+            + "</tbody></table>\n"
+
+            // ── Active Matches table
+            + "<div class='section-header'>"
+            + "<span class='section-title'>Active Matches</span>"
+            + "<span class='section-count' id='matchCount'></span>"
+            + "</div>\n"
+            + "<table><thead><tr>"
+            + "<th>Match ID</th><th>WAD</th><th>Players</th><th>Active</th><th>Status</th><th>Action</th>"
+            + "</tr></thead><tbody id='matchTbody'>"
+            + "<tr class='empty-row'><td colspan='6'>Loading\u2026</td></tr>"
+            + "</tbody></table>\n"
+
+            // ── Footer
+            + "<div class='footer'>"
+            + "<span class='footer-note'>IGNITION DOOM &nbsp;&middot;&nbsp; v" + version + " &nbsp;&middot;&nbsp; GNU GPL v3</span>"
+            + "</div>\n"
+
+            // ── Script
+            + "<script>\n"
+            + "var WAD_LABELS = {\n"
+            + "  'DOOM1':    'DOOM I \\u2014 Shareware (Episode 1)',\n"
+            + "  'DOOM':     'DOOM I \\u2014 Ultimate DOOM (Episodes 1\\u20134)',\n"
+            + "  'DOOM2':    'DOOM II \\u2014 Hell on Earth',\n"
+            + "  'TNT':      'Final DOOM \\u2014 TNT: Evilution',\n"
+            + "  'PLUTONIA': 'Final DOOM \\u2014 The Plutonia Experiment'\n"
+            + "};\n"
+
+            // Branding: hide the separator if both logos are missing
+            + "var _brandFailed = 0;\n"
+            + "function checkBrandingEmpty() {\n"
+            + "  _brandFailed++;\n"
+            + "  if (_brandFailed >= " + brandTotal + ") document.getElementById('brandingRow').style.display='none';\n"
+            + "}\n"
+
+            + "function fmtMs(ms) {\n"
+            + "  var s=Math.floor(ms/1000), m=Math.floor(s/60); s=s%60;\n"
+            + "  var h=Math.floor(m/60); m=m%60;\n"
+            + "  if(h>0) return h+'h '+pad(m)+'m';\n"
+            + "  if(m>0) return m+'m '+pad(s)+'s';\n"
+            + "  return s+'s';\n"
+            + "}\n"
+            + "function fmtUptime(sec) {\n"
+            + "  var m=Math.floor(sec/60), h=Math.floor(m/60); m=m%60;\n"
+            + "  if(h>0) return h+'h '+pad(m)+'m';\n"
+            + "  return m+'m '+Math.floor(sec%60)+'s';\n"
+            + "}\n"
+            + "function pad(n){ return n<10?'0'+n:''+n; }\n"
+            + "function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;'); }\n"
+
+            + "function copyId(el, id) {\n"
+            + "  navigator.clipboard.writeText(id).catch(function(){});\n"
+            + "  var f=el.querySelector('.copied-flash');\n"
+            + "  if(!f) return;\n"
+            + "  f.classList.add('show');\n"
+            + "  setTimeout(function(){ f.classList.remove('show'); }, 1400);\n"
+            + "}\n"
+
+            + "function populateWads(wads) {\n"
+            + "  ['spWad','dmWad'].forEach(function(id) {\n"
+            + "    var sel=document.getElementById(id), prev=sel.value;\n"
+            + "    sel.innerHTML='';\n"
+            + "    wads.forEach(function(w) {\n"
+            + "      var stem=w.replace(/\\.wad$/i,'').toUpperCase();\n"
+            + "      var opt=document.createElement('option');\n"
+            + "      opt.value=stem;\n"
+            + "      opt.textContent=WAD_LABELS[stem]||stem;\n"
+            + "      sel.appendChild(opt);\n"
+            + "    });\n"
+            + "    if(wads.map(function(w){return w.replace(/\\.wad$/i,'').toUpperCase();}).indexOf(prev)>=0) sel.value=prev;\n"
+            + "  });\n"
+            + "}\n"
+            + "function populatePwads(pwads) {\n"
+            + "  ['spPwad','dmPwad'].forEach(function(id) {\n"
+            + "    var sel=document.getElementById(id), prev=sel.value;\n"
+            + "    sel.innerHTML='<option value=\"\">\u2014 None \u2014</option>';\n"
+            + "    pwads.forEach(function(p) {\n"
+            + "      var opt=document.createElement('option');\n"
+            + "      opt.value=p; opt.textContent=p;\n"
+            + "      sel.appendChild(opt);\n"
+            + "    });\n"
+            + "    if(prev && pwads.indexOf(prev)>=0) sel.value=prev;\n"
+            + "  });\n"
+            + "  var show=pwads.length>0;\n"
+            + "  document.getElementById('spPwadField').style.display=show?'':'none';\n"
+            + "  document.getElementById('dmPwadField').style.display=show?'':'none';\n"
+            + "}\n"
+
+            + "function renderSessions(sessions) {\n"
+            + "  var tbody=document.getElementById('sessionTbody');\n"
+            + "  var n=sessions.length;\n"
+            + "  document.getElementById('sessionCount').textContent=n===0?'none active':n===1?'1 active':n+' active';\n"
+            + "  if(n===0){ tbody.innerHTML=\"<tr class='empty-row'><td colspan='4'>No active sessions</td></tr>\"; return; }\n"
+            + "  tbody.innerHTML=sessions.map(function(s){\n"
+            + "    return \"<tr>\"\n"
+            + "      +\"<td class='cell-id' onclick='copyId(this,\\\"\"+esc(s.id)+\"\\\")' title='Click to copy'>\"+esc(s.id)+\"<span class='copied-flash'>Copied!</span></td>\"\n"
+            + "      +\"<td class='cell-wad'>\"+esc(s.wad||'\\u2014')+\"</td>\"\n"
+            + "      +\"<td class='cell-time'>\"+fmtMs(s.uptimeMs)+\"</td>\"\n"
+            + "      +\"<td><span class='cell-status-running'>&#9679; Running</span></td>\"\n"
+            + "      +\"</tr>\";\n"
+            + "  }).join('');\n"
+            + "}\n"
+
+            + "function renderMatches(matches) {\n"
+            + "  var tbody=document.getElementById('matchTbody');\n"
+            + "  var n=matches.length;\n"
+            + "  document.getElementById('matchCount').textContent=n===0?'none active':n===1?'1 active':n+' active';\n"
+            + "  if(n===0){ tbody.innerHTML=\"<tr class='empty-row'><td colspan='6'>No active matches</td></tr>\"; return; }\n"
+            + "  tbody.innerHTML=matches.map(function(m){\n"
+            + "    var isFull=(m.joined>=m.players)||m.running;\n"
+            + "    var joinUrl='/system/doom/match/join?match='+encodeURIComponent(m.id)+'&wad='+encodeURIComponent(m.wad||'');\n"
+            + "    var statusEl=m.running?\"<span class='cell-status-running'>&#9679; Running</span>\":\"<span class='cell-status-lobby'>&#9675; Lobby</span>\";\n"
+            + "    var joinEl=isFull?\"<a class='join-link full'>Full</a>\":\"<a class='join-link' href='\"+joinUrl+\"'>Join</a>\";\n"
+            + "    var pJoined=isFull?\"<span class='joined'>\"+m.joined+\"</span>\":\"<span class='waiting'>\"+m.joined+\"</span>\";\n"
+            + "    return \"<tr>\"\n"
+            + "      +\"<td class='cell-id' onclick='copyId(this,\\\"\"+esc(m.id)+\"\\\")' title='Click to copy'>\"+esc(m.id)+\"<span class='copied-flash'>Copied!</span></td>\"\n"
+            + "      +\"<td class='cell-wad'>\"+esc(m.wad||'\\u2014')+\"</td>\"\n"
+            + "      +\"<td class='cell-players'>\"+pJoined+\" / \"+m.players+\"</td>\"\n"
+            + "      +\"<td class='cell-time'>\"+fmtMs(m.uptimeMs)+\"</td>\"\n"
+            + "      +\"<td>\"+statusEl+\"</td>\"\n"
+            + "      +\"<td>\"+joinEl+\"</td>\"\n"
+            + "      +\"</tr>\";\n"
+            + "  }).join('');\n"
+            + "}\n"
+
+            + "function updateStats(h) {\n"
+            + "  var used=h.activeSessions, cap=h.maxSessions, full=used>=cap;\n"
+            + "  document.getElementById('usedEngines').textContent=used;\n"
+            + "  document.getElementById('engineStat').className='stat-engines'+(full?' full':'');\n"
+            + "  document.getElementById('uptimeStat').textContent='Uptime: '+fmtUptime(h.uptimeSeconds);\n"
+            + "  document.getElementById('capWarning').className='cap-warning'+(full?'':' hidden');\n"
+            + "  document.getElementById('spCard').className='card'+(full?' disabled':'');\n"
+            + "  document.getElementById('dmCard').className='card'+(full?' disabled':'');\n"
+            + "}\n"
+
+            + "function apply(h) {\n"
+            + "  populateWads(h.availableWads||[]);\n"
+            + "  populatePwads(h.availablePwads||[]);\n"
+            + "  renderSessions(h.sessions||[]);\n"
+            + "  renderMatches(h.matches||[]);\n"
+            + "  updateStats(h);\n"
+            + "}\n"
+
+            + "function refresh() {\n"
+            + "  fetch('/system/doom/health')\n"
+            + "    .then(function(r){ return r.json(); })\n"
+            + "    .then(apply)\n"
+            + "    .catch(function(e){ console.warn('Health fetch failed:', e); });\n"
+            + "}\n"
+
+            + "function startSinglePlayer() {\n"
+            + "  var wad=document.getElementById('spWad').value;\n"
+            + "  var pwad=document.getElementById('spPwad').value;\n"
+            + "  var url='/system/doom/play?wad='+encodeURIComponent(wad);\n"
+            + "  if(pwad) url+='&pwad='+encodeURIComponent(pwad);\n"
+            + "  window.open(url,'_blank');\n"
+            + "}\n"
+            + "function createMatch() {\n"
+            + "  var wad=document.getElementById('dmWad').value;\n"
+            + "  var players=document.getElementById('dmPlayers').value;\n"
+            + "  var pwad=document.getElementById('dmPwad').value;\n"
+            + "  var url='/system/doom/match/create?wad='+encodeURIComponent(wad)+'&players='+players;\n"
+            + "  if(pwad) url+='&pwad='+encodeURIComponent(pwad);\n"
+            + "  window.open(url,'_blank');\n"
+            + "}\n"
+
+            + "document.getElementById('refreshLink').addEventListener('click',function(e){ e.preventDefault(); refresh(); });\n"
+            + "refresh();\n"
+            + "setInterval(refresh, 10000);\n"
+            + "</script>\n"
+            + "</body></html>\n";
+    }
+}
