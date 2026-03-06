@@ -2,10 +2,7 @@ package com.doom.headless;
 
 import com.doom.common.FrameData;
 import java.awt.image.BufferedImage;
-import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import javax.imageio.ImageIO;
 import org.junit.Test;
 import static org.junit.Assert.*;
 
@@ -173,32 +170,4 @@ public class FrameEncoderTest {
         System.out.println("Encoding time: " + encodeTime + " ms");
     }
 
-    /**
-     * Manual test: saves encoded image to file for visual inspection.
-     * Run this to verify the pipeline produces valid images.
-     */
-    @Test
-    public void testSaveToFile() throws IOException {
-        FrameEncoder encoder = new FrameEncoder(0.75f);
-        FrameData frame = createTestFrame();
-
-        // Save as PNG for verification
-        BufferedImage image = encoder.toBufferedImage(frame);
-        File outputFile = new File("test-frame.png");
-        ImageIO.write(image, "png", outputFile);
-
-        assertTrue("Output file should exist", outputFile.exists());
-        assertTrue("Output file should not be empty", outputFile.length() > 0);
-
-        System.out.println("Test frame saved to: " + outputFile.getAbsolutePath());
-
-        // Also save JPEG
-        byte[] jpegBytes = encoder.toJPEG(frame);
-        File jpegFile = new File("test-frame.jpg");
-        try (FileOutputStream fos = new FileOutputStream(jpegFile)) {
-            fos.write(jpegBytes);
-        }
-
-        System.out.println("JPEG frame saved to: " + jpegFile.getAbsolutePath());
-    }
 }

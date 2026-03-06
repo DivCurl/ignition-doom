@@ -40,7 +40,7 @@ public class GatewayHook extends AbstractGatewayModuleHook {
 
     private static final Logger logger = LoggerFactory.getLogger("DOOM.GatewayHook");
 
-    private static final String MODULE_VERSION = "0.8.2.21";
+    private static final String MODULE_VERSION = "0.9.2";
 
     private GatewayContext gatewayContext;
     private static volatile SessionManager sessionManager;  // static for servlet access

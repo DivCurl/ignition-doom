@@ -2,7 +2,7 @@
 
 Running DOOM natively inside Inductive Automation Ignition Perspective, with server-side rendering on the Gateway JVM and browser display via a self-contained HTTP servlet pipeline. Full audio — sound effects and music — with no external dependencies.
 
-**Current Version:** v0.9.0
+**Current Version:** v0.9.2
 
 ---
 
@@ -24,6 +24,10 @@ Running DOOM natively inside Inductive Automation Ignition Perspective, with ser
 | Game starts full-screen by default | ✅ Working |
 | Session landing page — browser UI for starting single-player and creating/joining deathmatch lobbies | ✅ Working |
 | PWAD / mod file support — load custom WADs alongside the base IWAD | ✅ Working |
+| PWAD auto-warp — game starts directly in MAP01/E1M1 without menu navigation | ✅ Working |
+| PWAD IWAD auto-detection — landing page detects and applies the required base WAD | ✅ Working |
+| Skill level selection — choosable per session on the landing page when a PWAD is loaded | ✅ Working |
+| End Game cleanup — browser shows "GAME ENDED" overlay when game is exited via in-game menu | ✅ Working |
 
 ## Planned
 
@@ -58,7 +62,7 @@ Engine (per session, child ClassLoader)
   └─ P2PNetDriver                    ← exchanges 8-byte tikcmds with peer engines
   └─ HeadlessSoundDriver             ← origin-tracked sound events
   └─ HeadlessMusicDriver             ← MUS→MIDI conversion
-  └─ FrameEncoder                    ← palette→RGB→PNG, dedicated encoder thread
+  └─ FrameEncoder                    ← palette→RGB→PNG/JPEG, dedicated encoder thread
 ```
 
 **ClassLoader isolation** — each browser session gets a child-first `SessionClassLoader` that loads `headless-renderer.jar`, isolating all Mocha DOOM statics per session.
@@ -109,15 +113,18 @@ Downloads DOOM1.WAD (shareware, ~4 MB) and FluidR3_GM soundfonts (~99 MB) into `
 # Install parent POM and common module to local Maven repo
 cd ignition-module
 mvn install -N
-mvn clean install -pl common
+mvn install -pl common
 
 # Build headless-renderer JAR
+# Note: use 'install' not 'clean install' — mvn clean may fail if an IDE
+# has a file lock on target/test-classes. Delete target/classes manually
+# first if you suspect stale IDE-compiled files are inflating the JAR.
 cd ../headless-renderer
-mvn clean install -DskipTests
+mvn install -DskipTests
 
 # Build gateway + module JARs
 cd ../ignition-module
-mvn clean package -DskipTests
+mvn package -DskipTests
 ```
 
 The Ignition SDK is fetched automatically from Inductive Automation's public Maven repository.
@@ -209,6 +216,7 @@ All paths are relative to your Ignition gateway root (e.g. `http://localhost:808
 | `/system/doom` | Session landing page — start games, view active sessions |
 | `/system/doom/play` | Single-player (default WAD) |
 | `/system/doom/play?wad=DOOM2` | Single-player with WAD selection |
+| `/system/doom/play?wad=DOOM2&pwad=mymod.wad&skill=3` | Single-player with PWAD and skill level (0–4) |
 | `/system/doom/match/create?wad=DOOM2&players=2` | Create a 2-player deathmatch |
 | `/system/doom/health` | JSON health + session/match status |
 | `/system/doom/admin?token=TOKEN` | Session admin (token printed in gateway log on startup) |
@@ -256,14 +264,15 @@ ignition-doom/
 │   │   └── src/main/java/com/doom/gateway/
 │   │       ├── DoomLandingPage.java Session landing page HTML generator
 │   │       └── ...
-│   ├── module.xml                   Module descriptor (v0.8.2.23)
+│   ├── module.xml                   Module descriptor
 │   ├── package-doom-modl.ps1        Windows: packages JARs into .modl (PowerShell)
 │   ├── package-doom-modl.sh         Linux/Mac: packages JARs into .modl (bash)
 │   ├── build/                       Deployable .modl artifacts (gitignored)
 │   ├── install-sdk.bat              Fallback: extract SDK JARs from Docker container
 │   └── INSTALL-SDK.md               SDK installation guide
-└── assets/                          Local game assets (WADs gitignored except DOOM1.WAD)
-    ├── WAD/                         IWAD files: place DOOM.WAD, DOOM2.WAD, etc. here
+└── assets/                          Local game assets (most gitignored)
+    ├── iwads/                       IWAD files: DOOM1.WAD committed; DOOM.WAD, DOOM2.WAD, etc. gitignored
+    ├── pwads/                       Optional PWAD/mod files (gitignored)
     └── soundfonts/                  FluidR3_GM JS files (gitignored, fetched by get-assets)
 ```
 

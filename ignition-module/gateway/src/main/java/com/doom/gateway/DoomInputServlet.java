@@ -120,6 +120,19 @@ public class DoomInputServlet extends HttpServlet {
             serveMidiData(session, resp);
 
         } else if (path.contains("frame")) {
+            // Pre-check GAME_ENDED before resolveRunningSession: when running=false,
+            // get() returns null → 404, blocking the sentinel from ever being served as 410.
+            String fSid = req.getParameter("session");
+            if (fSid != null) {
+                SessionManager fSm = GatewayHook.getSessionManager();
+                if (fSm != null) {
+                    DoomSession fSession = fSm.getSession(fSid);
+                    if (fSession != null && "GAME_ENDED".equals(fSession.getCurrentFrame())) {
+                        resp.setStatus(HttpServletResponse.SC_GONE); // 410
+                        return;
+                    }
+                }
+            }
             DoomSession session = resolveRunningSession(req, resp);
             if (session == null) return;
             serveFrame(session, resp);
@@ -206,6 +219,7 @@ public class DoomInputServlet extends HttpServlet {
         String wadName    = req.getParameter("wad");
         String pwadName   = req.getParameter("pwad");
         String frameFormat = "jpeg".equalsIgnoreCase(req.getParameter("format")) ? "jpeg" : "png";
+        int skill = parseIntParam(req, "skill", 2, 0, 4);
         if (wadName == null || wadName.trim().isEmpty()) wadName = SessionManager.DEFAULT_WAD;
 
         // Validate session ID format (UUID v4: 8-4-4-4-12)
@@ -214,7 +228,7 @@ public class DoomInputServlet extends HttpServlet {
             // Send back a page that generates a UUID and redirects to itself with it
             resp.setContentType("text/html; charset=UTF-8");
             resp.setHeader("Cache-Control", "no-cache");
-            resp.getWriter().write(buildSessionInitPage(wadName, frameFormat, pwadName));
+            resp.getWriter().write(buildSessionInitPage(wadName, frameFormat, pwadName, skill));
             return;
         }
 
@@ -229,7 +243,7 @@ public class DoomInputServlet extends HttpServlet {
 
         DoomSession session;
         try {
-            session = sm.getOrCreate(sessionId, wadName, 0, 0, 2, frameFormat, pwadName);
+            session = sm.getOrCreate(sessionId, wadName, 0, 0, skill, frameFormat, pwadName);
         } catch (IllegalArgumentException e) {
             resp.setStatus(404);
             resp.setContentType("text/html; charset=UTF-8");
@@ -428,6 +442,10 @@ public class DoomInputServlet extends HttpServlet {
         String frameDataURI = session.getCurrentFrame();
         if (frameDataURI == null || frameDataURI.isEmpty()) {
             resp.setStatus(HttpServletResponse.SC_NO_CONTENT);
+            return;
+        }
+        if ("GAME_ENDED".equals(frameDataURI)) {
+            resp.setStatus(HttpServletResponse.SC_GONE); // 410 — engine exited cleanly
             return;
         }
         resp.setContentType("text/plain; charset=UTF-8");
@@ -1040,6 +1058,10 @@ public class DoomInputServlet extends HttpServlet {
             resp.setStatus(HttpServletResponse.SC_NO_CONTENT);
             return;
         }
+        if ("GAME_ENDED".equals(dataURI)) {
+            resp.setStatus(HttpServletResponse.SC_GONE); // 410 — engine exited cleanly
+            return;
+        }
         resp.setContentType("text/plain; charset=UTF-8");
         resp.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
         resp.setHeader("Pragma", "no-cache");
@@ -1192,7 +1214,7 @@ public class DoomInputServlet extends HttpServlet {
      * and redirects back to /play with it. This handles the first-visit case where
      * the browser doesn't have a session ID yet.
      */
-    private static String buildSessionInitPage(String wadName, String frameFormat, String pwadName) {
+    private static String buildSessionInitPage(String wadName, String frameFormat, String pwadName, int skill) {
         String fmtParam  = "jpeg".equals(frameFormat) ? "+'&format=jpeg'" : "";
         String pwadParam = (pwadName != null && !pwadName.isBlank())
             ? "+'&pwad='+encodeURIComponent(" + escapeJsString(pwadName) + ")" : "";
@@ -1209,7 +1231,7 @@ public class DoomInputServlet extends HttpServlet {
             + "var sid = sessionStorage.getItem('doomSessionId') || uuid4();\n"
             + "sessionStorage.setItem('doomSessionId', sid);\n"
             + "var wad = " + escapeJsString(wadName) + ";\n"
-            + "window.location.replace('/system/doom/play?session=' + sid + '&wad=' + encodeURIComponent(wad)" + fmtParam + pwadParam + ");\n"
+            + "window.location.replace('/system/doom/play?session=' + sid + '&wad=' + encodeURIComponent(wad) + '&skill=" + skill + "'" + fmtParam + pwadParam + ");\n"
             + "</script></body></html>";
     }
 

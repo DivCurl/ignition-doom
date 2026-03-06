@@ -7,8 +7,10 @@ REM container. Use this after initial container setup (setup-ignition-container)
 REM to add or refresh assets without recreating the container.
 REM
 REM Usage:
-REM   deploy-assets.bat <container>                  Deploy all asset categories
-REM   deploy-assets.bat <container> -w -s            Deploy wads and sounds only
+REM   deploy-assets.bat <container>              Deploy all asset categories
+REM   deploy-assets.bat <container> -w -s        Deploy wads and sounds only
+REM   deploy-assets.bat <container> -w --clean   Purge wads, then redeploy them
+REM   deploy-assets.bat <container> --clean      Purge and redeploy all categories
 REM
 REM Arguments:
 REM   <container>      Docker container name (required, positional first argument)
@@ -18,13 +20,11 @@ REM   -w, --wads       Deploy IWAD files from assets\iwads\
 REM   -s, --sounds     Deploy SoundFont files from assets\soundfonts\
 REM   -b, --branding   Deploy branding assets from assets\branding\
 REM   -p, --pwads      Deploy PWAD/mod files from assets\pwads\
+REM   -a, --all        Deploy all categories (same as omitting flags entirely)
 REM
-REM Purge flags (clear the category in the container before deploying):
-REM   --purge-wad      Clear existing WADs before deploying
-REM   --purge-sound    Clear existing soundfonts before deploying
-REM   --purge-branding Clear existing branding assets before deploying
-REM   --purge-pwad     Clear existing PWADs before deploying
-REM   --purge-all      Clear all categories before deploying
+REM Purge modifier:
+REM   --clean          Purge selected categories in the container before deploying
+REM                    Applies to whichever categories are being deployed
 REM ============================================================================
 
 setlocal enabledelayedexpansion
@@ -33,7 +33,7 @@ REM ── Container name (mandatory first argument) ─────────
 if "%~1"=="" (
     echo.
     echo ERROR: Container name is required as the first argument.
-    echo Usage: deploy-assets.bat ^<container-name^> [-w] [-s] [-b] [-p] [--purge-*]
+    echo Usage: deploy-assets.bat ^<container-name^> [-w^|-s^|-b^|-p^|-a] [--clean]
     echo.
     exit /b 1
 )
@@ -43,10 +43,7 @@ set CONTAINER_DOOM_PATH=/usr/local/bin/ignition/user-lib/doom
 set CONTAINER_IWAD_PATH=%CONTAINER_DOOM_PATH%/iwads
 
 REM ── Parse arguments ───────────────────────────────────────────────────────
-set PURGE_WAD=
-set PURGE_SOUND=
-set PURGE_BRANDING=
-set PURGE_PWAD=
+set CLEAN=
 set DEPLOY_WADS=
 set DEPLOY_SOUNDS=
 set DEPLOY_BRANDING=
@@ -54,19 +51,17 @@ set DEPLOY_PWADS=
 set ANY_DEPLOY_FLAG=
 
 :parse_args
-if "%~1"=="-w"             ( set DEPLOY_WADS=1     & set ANY_DEPLOY_FLAG=1 & shift & goto :parse_args )
-if "%~1"=="--wads"         ( set DEPLOY_WADS=1     & set ANY_DEPLOY_FLAG=1 & shift & goto :parse_args )
-if "%~1"=="-s"             ( set DEPLOY_SOUNDS=1   & set ANY_DEPLOY_FLAG=1 & shift & goto :parse_args )
-if "%~1"=="--sounds"       ( set DEPLOY_SOUNDS=1   & set ANY_DEPLOY_FLAG=1 & shift & goto :parse_args )
-if "%~1"=="-b"             ( set DEPLOY_BRANDING=1 & set ANY_DEPLOY_FLAG=1 & shift & goto :parse_args )
-if "%~1"=="--branding"     ( set DEPLOY_BRANDING=1 & set ANY_DEPLOY_FLAG=1 & shift & goto :parse_args )
-if "%~1"=="-p"             ( set DEPLOY_PWADS=1    & set ANY_DEPLOY_FLAG=1 & shift & goto :parse_args )
-if "%~1"=="--pwads"        ( set DEPLOY_PWADS=1    & set ANY_DEPLOY_FLAG=1 & shift & goto :parse_args )
-if "%~1"=="--purge-all"    ( set PURGE_WAD=1 & set PURGE_SOUND=1 & set PURGE_BRANDING=1 & set PURGE_PWAD=1 & shift & goto :parse_args )
-if "%~1"=="--purge-wad"    ( set PURGE_WAD=1      & shift & goto :parse_args )
-if "%~1"=="--purge-sound"  ( set PURGE_SOUND=1    & shift & goto :parse_args )
-if "%~1"=="--purge-branding" ( set PURGE_BRANDING=1 & shift & goto :parse_args )
-if "%~1"=="--purge-pwad"   ( set PURGE_PWAD=1     & shift & goto :parse_args )
+if "%~1"=="-w"         ( set DEPLOY_WADS=1     & set ANY_DEPLOY_FLAG=1 & shift & goto :parse_args )
+if "%~1"=="--wads"     ( set DEPLOY_WADS=1     & set ANY_DEPLOY_FLAG=1 & shift & goto :parse_args )
+if "%~1"=="-s"         ( set DEPLOY_SOUNDS=1   & set ANY_DEPLOY_FLAG=1 & shift & goto :parse_args )
+if "%~1"=="--sounds"   ( set DEPLOY_SOUNDS=1   & set ANY_DEPLOY_FLAG=1 & shift & goto :parse_args )
+if "%~1"=="-b"         ( set DEPLOY_BRANDING=1 & set ANY_DEPLOY_FLAG=1 & shift & goto :parse_args )
+if "%~1"=="--branding" ( set DEPLOY_BRANDING=1 & set ANY_DEPLOY_FLAG=1 & shift & goto :parse_args )
+if "%~1"=="-p"         ( set DEPLOY_PWADS=1    & set ANY_DEPLOY_FLAG=1 & shift & goto :parse_args )
+if "%~1"=="--pwads"    ( set DEPLOY_PWADS=1    & set ANY_DEPLOY_FLAG=1 & shift & goto :parse_args )
+if "%~1"=="-a"         ( set DEPLOY_WADS=1 & set DEPLOY_SOUNDS=1 & set DEPLOY_BRANDING=1 & set DEPLOY_PWADS=1 & set ANY_DEPLOY_FLAG=1 & shift & goto :parse_args )
+if "%~1"=="--all"      ( set DEPLOY_WADS=1 & set DEPLOY_SOUNDS=1 & set DEPLOY_BRANDING=1 & set DEPLOY_PWADS=1 & set ANY_DEPLOY_FLAG=1 & shift & goto :parse_args )
+if "%~1"=="--clean"    ( set CLEAN=1 & shift & goto :parse_args )
 
 REM Default: deploy all categories when no explicit deploy flags are given
 if not defined ANY_DEPLOY_FLAG (
@@ -89,10 +84,14 @@ if defined ANY_DEPLOY_FLAG (
     if defined DEPLOY_PWADS    set DEPLOY_TARGETS=!DEPLOY_TARGETS! pwads
     echo  Deploy:!DEPLOY_TARGETS!
 )
-if defined PURGE_WAD      echo  Purge: wad
-if defined PURGE_SOUND    echo  Purge: sound
-if defined PURGE_BRANDING echo  Purge: branding
-if defined PURGE_PWAD     echo  Purge: pwad
+if defined CLEAN (
+    set CLEAN_TARGETS=
+    if defined DEPLOY_WADS     set CLEAN_TARGETS=!CLEAN_TARGETS! wads
+    if defined DEPLOY_SOUNDS   set CLEAN_TARGETS=!CLEAN_TARGETS! sounds
+    if defined DEPLOY_BRANDING set CLEAN_TARGETS=!CLEAN_TARGETS! branding
+    if defined DEPLOY_PWADS    set CLEAN_TARGETS=!CLEAN_TARGETS! pwads
+    echo  Clean:!CLEAN_TARGETS!
+)
 echo ============================================================================
 echo.
 
@@ -118,7 +117,7 @@ if not defined DEPLOY_WADS goto :skip_wads
 echo [wads] Deploying DOOM IWAD files...
 echo        Searching assets\iwads\ for WAD files...
 docker exec %CONTAINER_NAME% bash -c "mkdir -p %CONTAINER_IWAD_PATH%" >nul 2>&1
-if defined PURGE_WAD (
+if defined CLEAN (
     echo        Purging existing WAD files from container...
     docker exec -u root %CONTAINER_NAME% bash -c "rm -f %CONTAINER_IWAD_PATH%/*.WAD %CONTAINER_IWAD_PATH%/*.wad" >nul 2>&1
 )
@@ -158,7 +157,7 @@ if not exist "assets\soundfonts" (
     echo         INFO: assets\soundfonts\ not found - skipping.
     goto :skip_soundfonts
 )
-if defined PURGE_SOUND (
+if defined CLEAN (
     echo         Purging existing soundfonts from container...
     docker exec -u root %CONTAINER_NAME% bash -c "rm -rf %CONTAINER_DOOM_PATH%/soundfonts && mkdir -p %CONTAINER_DOOM_PATH%/soundfonts && chown ignition:ignition %CONTAINER_DOOM_PATH%/soundfonts" >nul 2>&1
 ) else (
@@ -173,7 +172,7 @@ docker exec -u root %CONTAINER_NAME% bash -c "cp -r /tmp/soundfonts/. %CONTAINER
 if errorlevel 1 (
     echo         WARNING: SoundFont installation failed.
 ) else (
-    for /f %%C in ('dir /b assets\soundfonts\*-mp3.js 2^>nul ^| find /c "-mp3.js"') do echo         %%C instrument files deployed.
+    for %%F in (assets\soundfonts\*) do echo         Deployed: %%~nxF
 )
 echo.
 :skip_soundfonts
@@ -185,7 +184,7 @@ if not exist "assets\branding" (
     echo           INFO: assets\branding\ not found - skipping.
     goto :skip_branding
 )
-if defined PURGE_BRANDING (
+if defined CLEAN (
     echo           Purging existing branding assets from container...
     docker exec -u root %CONTAINER_NAME% bash -c "rm -rf %CONTAINER_DOOM_PATH%/branding && mkdir -p %CONTAINER_DOOM_PATH%/branding && chown ignition:ignition %CONTAINER_DOOM_PATH%/branding" >nul 2>&1
 ) else (
@@ -200,7 +199,7 @@ docker exec -u root %CONTAINER_NAME% bash -c "cp -r /tmp/branding/. %CONTAINER_D
 if errorlevel 1 (
     echo           WARNING: Branding asset installation failed.
 ) else (
-    echo           Branding assets deployed.
+    for %%F in (assets\branding\*) do echo           Deployed: %%~nxF
 )
 echo.
 :skip_branding
@@ -212,26 +211,29 @@ if not exist "assets\pwads" (
     echo         INFO: assets\pwads\ not found - skipping.
     goto :skip_pwads
 )
-if defined PURGE_PWAD (
+if defined CLEAN (
     echo         Purging existing PWAD files from container...
     docker exec -u root %CONTAINER_NAME% bash -c "rm -rf %CONTAINER_DOOM_PATH%/pwads && mkdir -p %CONTAINER_DOOM_PATH%/pwads && chown ignition:ignition %CONTAINER_DOOM_PATH%/pwads" >nul 2>&1
 ) else (
     docker exec %CONTAINER_NAME% bash -c "mkdir -p %CONTAINER_DOOM_PATH%/pwads" >nul 2>&1
 )
 set PWAD_COUNT=0
-for %%P in (assets\pwads\*.wad assets\pwads\*.WAD assets\pwads\*.pk3 assets\pwads\*.pk7) do set /a PWAD_COUNT+=1
+for %%P in (assets\pwads\*.wad assets\pwads\*.WAD assets\pwads\*.pk3 assets\pwads\*.pk7) do (
+    docker cp "%%P" %CONTAINER_NAME%:/tmp/%%~nxP >nul 2>&1
+    if not errorlevel 1 (
+        docker exec -u root %CONTAINER_NAME% bash -c "cp /tmp/%%~nxP %CONTAINER_DOOM_PATH%/pwads/ && chown ignition:ignition %CONTAINER_DOOM_PATH%/pwads/%%~nxP" >nul 2>&1
+        if not errorlevel 1 (
+            echo         Deployed: %%~nxP
+            set /a PWAD_COUNT+=1
+        ) else (
+            echo         WARNING: Failed to install %%~nxP in container
+        )
+    ) else (
+        echo         WARNING: Failed to copy %%~nxP to container
+    )
+)
 if %PWAD_COUNT% EQU 0 (
     echo         INFO: No PWAD/mod files found in assets\pwads\ - skipping.
-    goto :skip_pwads
-)
-docker cp assets\pwads\. %CONTAINER_NAME%:/tmp/pwads/ >nul 2>&1
-if errorlevel 1 (
-    echo         WARNING: Failed to copy PWADs to container.
-    goto :skip_pwads
-)
-docker exec -u root %CONTAINER_NAME% bash -c "find /tmp/pwads -maxdepth 1 -type f | xargs -I{} cp {} %CONTAINER_DOOM_PATH%/pwads/ && chown -R ignition:ignition %CONTAINER_DOOM_PATH%/pwads" >nul 2>&1
-if errorlevel 1 (
-    echo         WARNING: PWAD installation failed.
 ) else (
     echo         %PWAD_COUNT% PWAD/mod file^(s^) deployed.
 )

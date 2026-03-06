@@ -295,6 +295,15 @@ public class SessionManager {
     }
 
     /**
+     * Returns a session by ID regardless of running state.
+     * Used to detect GAME_ENDED sentinel after the session has stopped.
+     */
+    public DoomSession getSession(String sessionId) {
+        if (sessionId == null) return null;
+        return sessions.get(sessionId);
+    }
+
+    /**
      * Returns the sound data for a given WAD path and sound name.
      * Returns null if the cache isn't built yet or the sound doesn't exist.
      */
@@ -380,7 +389,12 @@ public class SessionManager {
         json.append("\"availablePwads\":[");
         for (int i = 0; i < pwads.size(); i++) {
             if (i > 0) json.append(",");
-            json.append("\"").append(esc(pwads.get(i))).append("\"");
+            String pwadName = pwads.get(i);
+            WadInspector.WadInfo info = WadInspector.inspect(new java.io.File(PWAD_DIR, pwadName));
+            json.append("{\"name\":\"").append(esc(pwadName)).append("\"");
+            if (info.iwad     != null) json.append(",\"iwad\":\"").append(esc(info.iwad)).append("\"");
+            if (info.firstMap != null) json.append(",\"firstMap\":\"").append(esc(info.firstMap)).append("\"");
+            json.append("}");
         }
         json.append("],");
         json.append("\"sessions\":[");

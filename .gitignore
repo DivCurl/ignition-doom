@@ -9,17 +9,14 @@ ignore/
 !**/doom1.wad
 
 # PWAD/mod files — user-supplied; not redistributable
-assets/pwads/*.wad
-assets/pwads/*.WAD
-assets/pwads/*.pk3
-assets/pwads/*.pk7
+assets/pwads/*
 
 # Soundfonts — ~99 MB of Base64-encoded MP3 audio, fetched by get-assets.bat/.sh
 # CC-BY 3.0 (FluidR3_GM) and MIT licenses permit redistribution, but the size is prohibitive
-assets/soundfonts/
+assets/soundfonts/*
 
 # Third-party logos (trademarks — not redistributable)
-assets/branding/
+assets/branding/*
 
 # Maven build artifacts
 **/target/

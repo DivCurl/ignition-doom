@@ -12,9 +12,13 @@ $src       = Split-Path $scriptDir -Parent              # <repo>/
 $out       = Join-Path $scriptDir 'build'               # <repo>/ignition-module/build/
 $stage     = Join-Path $env:TEMP 'doom-modl-stage'      # %TEMP%/doom-modl-stage/
 
-# Read version from module.xml
+# Read version from module.xml (used for .modl filename and display)
 [xml]$xml = Get-Content (Join-Path $scriptDir 'module.xml')
 $ver = $xml.modules.module.version
+
+# Read headless-renderer JAR version from its own pom.xml (may differ from module version)
+[xml]$hrPom = Get-Content (Join-Path $src 'headless-renderer\pom.xml')
+$hrVer = $hrPom.project.version
 
 Write-Host ""
 Write-Host "============================================================"
@@ -37,7 +41,7 @@ if (-not (Test-Path $out)) { New-Item -ItemType Directory -Path $out | Out-Null 
 Copy-Item (Join-Path $scriptDir 'module.xml')                                               (Join-Path $stage 'module.xml')
 Copy-Item (Join-Path $scriptDir 'common\target\common.jar')                                 (Join-Path $stage 'common.jar')
 Copy-Item (Join-Path $scriptDir 'gateway\target\gateway.jar')                               (Join-Path $stage 'gateway.jar')
-Copy-Item (Join-Path $src        "headless-renderer\target\headless-renderer-$ver.jar")     (Join-Path $stage 'headless-renderer.jar')
+Copy-Item (Join-Path $src        "headless-renderer\target\headless-renderer-$hrVer.jar")   (Join-Path $stage 'headless-renderer.jar')
 
 Write-Host "Staged files:"
 Get-ChildItem $stage | Format-Table Name, Length

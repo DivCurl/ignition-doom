@@ -96,6 +96,8 @@ public class SessionRunner implements ISessionRunner {
     private volatile boolean     initialized = false;
     private volatile boolean     running     = false;
     private Thread               gameThread;
+    /** Set to true once the player enters a level; used to detect End Game title-screen return. */
+    private volatile boolean     wasInGame   = false;
 
     // ── Engine (erased to Object — no compile-time dep on engine types from gateway) ──
     private Object doomMain; // actual type: doom.DoomMain<byte[], byte[]>
@@ -526,6 +528,21 @@ public class SessionRunner implements ISessionRunner {
                 logger.info("P2PNetDriver installed: slot {} of {} players", p2pSlot, numPlayers);
             }
 
+            // Auto-warp to MAP01/E1M1 when a PWAD is loaded without an explicit warp target.
+            // Matches typical source port behaviour: -file mymod.wad drops straight into the first map.
+            //
+            // Cannot use DeferedInitNew() here: setupLoop() checks autostart before entering DoomLoop().
+            // When autostart==false it calls StartTitle() which sets gameaction=ga_nothing, wiping any
+            // deferred action we queued. Setting autostart=true (with the desired skill/ep/map) makes
+            // setupLoop() call InitNew() directly instead, bypassing StartTitle() entirely.
+            if (pwadPath != null && !pwadPath.isEmpty() && startEp == 0) {
+                dm.startskill   = defines.skill_t.values()[Math.max(0, Math.min(4, skill))];
+                dm.startepisode = 1;
+                dm.startmap     = 1;
+                dm.autostart    = true;
+                logger.info("PWAD auto-warp: autostart=true, E1M1/MAP01, skill {}", skill + 1);
+            }
+
             // Signal successful initialization to start()
             running     = true;
             initialized = true;
@@ -545,6 +562,11 @@ public class SessionRunner implements ISessionRunner {
             }
         } finally {
             running = false;
+            // Set sentinel so the browser detects a clean engine exit (e.g. End Game menu action).
+            // Only set if the engine fully initialized — avoids false positives on startup failure.
+            if (initialized) {
+                currentFrame.set("GAME_ENDED");
+            }
             // Release latch so start() doesn't hang if init never completed
             initLatch.countDown();
             v.renderers.BufferedRenderer.setHeadlessCallback(null);
@@ -554,7 +576,26 @@ public class SessionRunner implements ISessionRunner {
 
     // ── Private: Frame callback (35 Hz, game thread) ─────────────────────────
 
+    @SuppressWarnings("unchecked")
     private void onFrameRendered(FrameData frameData) {
+        // Detect End Game: player was in a level and the game has returned to the title screen.
+        // M_EndGameResponse calls StartTitle() which transitions gamestate → GS_DEMOSCREEN but
+        // never exits DoomLoop(), so the finally block never runs. We detect the transition here
+        // and push the GAME_ENDED sentinel so the browser shows the overlay immediately.
+        // This also fires on natural game completion (e.g. after the DOOM2 finale).
+        if (doomMain != null) {
+            doom.DoomMain<byte[], byte[]> dm = (doom.DoomMain<byte[], byte[]>) doomMain;
+            defines.gamestate_t gs = dm.gamestate;
+            if (gs == defines.gamestate_t.GS_LEVEL) {
+                wasInGame = true;
+            } else if (wasInGame && gs == defines.gamestate_t.GS_DEMOSCREEN) {
+                logger.info("Game returned to title screen after playing — signalling GAME_ENDED");
+                currentFrame.set("GAME_ENDED");
+                running = false;
+                return;
+            }
+        }
+
         processInputEvents();
         collectSoundEvents();
         collectMusicState();

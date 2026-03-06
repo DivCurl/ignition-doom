@@ -1552,11 +1552,20 @@ public class BoomLevelLoader extends AbstractLevelLoader {
              */
 
             default: // normal cases
-                // TODO: Boom uses "SafeTextureNumForName" here. Find out what
-                // it does.
-                sd.midtexture = (short) DOOM.textureManager.CheckTextureNumForName(msd.midtexture);
-                sd.toptexture = (short) DOOM.textureManager.CheckTextureNumForName(msd.toptexture);
-                sd.bottomtexture = (short) DOOM.textureManager.CheckTextureNumForName(msd.bottomtexture);
+                // Implements Boom's SafeTextureNumForName: clamp -1 (not found) to 0
+                // rather than letting a -1 index reach the renderer and crash.
+                { int t;
+                t = DOOM.textureManager.CheckTextureNumForName(msd.midtexture);
+                if (t < 0) { System.err.printf("P_LoadSideDefs2: sidedef %d midtexture '%s' not found, substituting texture 0\n", i, msd.midtexture); t = 0; }
+                sd.midtexture = (short) t;
+
+                t = DOOM.textureManager.CheckTextureNumForName(msd.toptexture);
+                if (t < 0) { System.err.printf("P_LoadSideDefs2: sidedef %d toptexture '%s' not found, substituting texture 0\n", i, msd.toptexture); t = 0; }
+                sd.toptexture = (short) t;
+
+                t = DOOM.textureManager.CheckTextureNumForName(msd.bottomtexture);
+                if (t < 0) { System.err.printf("P_LoadSideDefs2: sidedef %d bottomtexture '%s' not found, substituting texture 0\n", i, msd.bottomtexture); t = 0; }
+                sd.bottomtexture = (short) t; }
                 break;
             }
         }
