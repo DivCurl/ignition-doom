@@ -28,6 +28,8 @@ import org.slf4j.LoggerFactory;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -118,6 +120,11 @@ public class DoomInputServlet extends HttpServlet {
             DoomSession session = resolveRunningSession(req, resp);
             if (session == null) return;
             serveMidiData(session, resp);
+
+        } else if (path.contains("frame/stream")) {
+            DoomSession session = resolveRunningSession(req, resp);
+            if (session == null) return;
+            streamFrames(session, resp);
 
         } else if (path.contains("frame")) {
             // Pre-check GAME_ENDED before resolveRunningSession: when running=false,
@@ -439,20 +446,25 @@ public class DoomInputServlet extends HttpServlet {
     // ── /frame ────────────────────────────────────────────────────────────────
 
     private void serveFrame(DoomSession session, HttpServletResponse resp) throws IOException {
-        String frameDataURI = session.getCurrentFrame();
-        if (frameDataURI == null || frameDataURI.isEmpty()) {
+        String sentinel = session.getCurrentFrame();
+        if (sentinel == null || sentinel.isEmpty()) {
             resp.setStatus(HttpServletResponse.SC_NO_CONTENT);
             return;
         }
-        if ("GAME_ENDED".equals(frameDataURI)) {
+        if ("GAME_ENDED".equals(sentinel)) {
             resp.setStatus(HttpServletResponse.SC_GONE); // 410 — engine exited cleanly
             return;
         }
-        resp.setContentType("text/plain; charset=UTF-8");
+        byte[] frameBytes = session.getCurrentFrameBytes();
+        if (frameBytes == null || frameBytes.length == 0) {
+            resp.setStatus(HttpServletResponse.SC_NO_CONTENT);
+            return;
+        }
+        resp.setContentType(session.getFrameContentType());
         resp.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
         resp.setHeader("Pragma", "no-cache");
         resp.setHeader("Expires", "0");
-        resp.getWriter().write(frameDataURI);
+        resp.getOutputStream().write(frameBytes);
     }
 
     // ── /sounds ───────────────────────────────────────────────────────────────
@@ -796,6 +808,12 @@ public class DoomInputServlet extends HttpServlet {
             serveMatchCreate(req, resp);
         } else if (path.contains("/join")) {
             serveMatchJoin(req, resp);
+        } else if (path.contains("/frame/stream")) {
+            MatchSession match = resolveRunningMatch(req, resp);
+            if (match == null) return;
+            String sid = req.getParameter("session");
+            streamMatchFrames(match, sid, resp);
+
         } else if (path.contains("/frame")) {
             MatchSession match = resolveRunningMatch(req, resp);
             if (match == null) return;
@@ -916,13 +934,14 @@ public class DoomInputServlet extends HttpServlet {
                 "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")) {
             resp.setContentType("text/html; charset=UTF-8");
             resp.setHeader("Cache-Control", "no-cache");
-            String wadParam  = req.getParameter("wad")     != null ? req.getParameter("wad") : SessionManager.DEFAULT_WAD;
-            String plrParam  = req.getParameter("players") != null ? req.getParameter("players") : "2";
-            String warpParam = req.getParameter("warp")    != null ? req.getParameter("warp") : "";
-            String sklParam  = req.getParameter("skill")   != null ? req.getParameter("skill") : "";
-            String fmtParam  = "jpeg".equalsIgnoreCase(req.getParameter("format")) ? "jpeg" : "";
-            String pwadParam = req.getParameter("pwad")    != null ? req.getParameter("pwad") : "";
-            resp.getWriter().write(buildMatchInitPage(wadParam, plrParam, warpParam, sklParam, fmtParam, pwadParam));
+            String wadParam    = req.getParameter("wad")     != null ? req.getParameter("wad") : SessionManager.DEFAULT_WAD;
+            String plrParam    = req.getParameter("players") != null ? req.getParameter("players") : "2";
+            String warpParam   = req.getParameter("warp")    != null ? req.getParameter("warp") : "";
+            String sklParam    = req.getParameter("skill")   != null ? req.getParameter("skill") : "";
+            String fmtParam    = "jpeg".equalsIgnoreCase(req.getParameter("format")) ? "jpeg" : "";
+            String pwadParam   = req.getParameter("pwad")    != null ? req.getParameter("pwad") : "";
+            String midParam    = req.getParameter("matchId") != null ? req.getParameter("matchId") : "";
+            resp.getWriter().write(buildMatchInitPage(wadParam, plrParam, warpParam, sklParam, fmtParam, pwadParam, midParam));
             return;
         }
 
@@ -953,8 +972,32 @@ public class DoomInputServlet extends HttpServlet {
             } catch (NumberFormatException ignored) {}
         }
 
-        // Generate match UUID
-        String matchId = java.util.UUID.randomUUID().toString();
+        // Resolve match ID: use caller-supplied custom ID or auto-generate a short one
+        String requestedId = req.getParameter("matchId");
+        String matchId;
+        if (requestedId != null && !requestedId.isBlank()) {
+            String normalized = requestedId.trim().toUpperCase();
+            if (!normalized.matches("[A-Z0-9\\-]{3,12}")) {
+                resp.setStatus(400);
+                resp.setContentType("text/html; charset=UTF-8");
+                resp.getWriter().write(buildErrorPage("Invalid Match ID",
+                    "Match ID must be 3\u201312 letters, numbers, or hyphens. Got: '"
+                    + escapeHtml(normalized) + "'"));
+                return;
+            }
+            if (sm.getMatch(normalized) != null) {
+                resp.setStatus(409);
+                resp.setContentType("text/html; charset=UTF-8");
+                resp.getWriter().write(buildErrorPage("Match ID already in use",
+                    "A match named &ldquo;" + escapeHtml(normalized) + "&rdquo; already exists. "
+                    + "Choose a different ID, or leave the field blank to auto-generate."));
+                return;
+            }
+            matchId = normalized;
+        } else {
+            matchId = generateMatchId();
+            if (sm.getMatch(matchId) != null) matchId = generateMatchId(); // retry once on collision
+        }
         logger.info("Creating match: id={} wad={} players={}", matchId, wadName, numPlayers);
 
         MatchSession match;
@@ -1053,20 +1096,99 @@ public class DoomInputServlet extends HttpServlet {
         String sid  = req.getParameter("session");
         int slot    = sid != null ? match.getSlot(sid) : 0;
         if (slot < 0) slot = 0;
-        String dataURI = match.getPlayerFrame(slot);
-        if (dataURI == null || dataURI.isEmpty()) {
+        String sentinel = match.getPlayerFrame(slot);
+        if (sentinel == null || sentinel.isEmpty()) {
             resp.setStatus(HttpServletResponse.SC_NO_CONTENT);
             return;
         }
-        if ("GAME_ENDED".equals(dataURI)) {
+        if ("GAME_ENDED".equals(sentinel)) {
             resp.setStatus(HttpServletResponse.SC_GONE); // 410 — engine exited cleanly
             return;
         }
-        resp.setContentType("text/plain; charset=UTF-8");
+        byte[] frameBytes = match.getPlayerFrameBytes(slot);
+        if (frameBytes == null || frameBytes.length == 0) {
+            resp.setStatus(HttpServletResponse.SC_NO_CONTENT);
+            return;
+        }
+        resp.setContentType(match.getPlayerFrameContentType(slot));
         resp.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
         resp.setHeader("Pragma", "no-cache");
         resp.setHeader("Expires", "0");
-        resp.getWriter().write(dataURI);
+        resp.getOutputStream().write(frameBytes);
+    }
+
+    // ── MJPEG push streaming ──────────────────────────────────────────────────
+
+    private static final String MJPEG_BOUNDARY  = "DOOM_FRAME";
+    private static final byte[] MJPEG_DELIMITER = ("--" + MJPEG_BOUNDARY + "\r\n").getBytes(StandardCharsets.US_ASCII);
+
+    /**
+     * Streams MJPEG frames for a single-player session.
+     * Blocks the Jetty thread for the session lifetime (acceptable for MAX_SESSIONS=4).
+     * The client sets &lt;img src="/system/doom/frame/stream?session=ID"&gt; and the
+     * browser renders each pushed JPEG natively, firing img.onload per frame.
+     */
+    private void streamFrames(DoomSession session, HttpServletResponse resp) throws IOException {
+        resp.setContentType("multipart/x-mixed-replace; boundary=" + MJPEG_BOUNDARY);
+        resp.setHeader("Cache-Control", "no-cache");
+        resp.setHeader("Connection", "close");
+        OutputStream out = resp.getOutputStream();
+        int seq = session.getFrameSeq();
+        while (session.isRunning()) {
+            try {
+                byte[] frame = session.waitForNextFrame(seq, 2000);
+                if (frame == null) continue;
+                seq = session.getFrameSeq();
+                writeFramePart(out, frame, session.getFrameContentType());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            } catch (IOException e) {
+                break; // client disconnected
+            }
+        }
+    }
+
+    /**
+     * Streams MJPEG frames for a specific player slot in a match session.
+     */
+    private void streamMatchFrames(MatchSession match, String browserSid,
+                                   HttpServletResponse resp) throws IOException {
+        int slot = browserSid != null ? match.getSlot(browserSid) : 0;
+        if (slot < 0) slot = 0;
+        // Wait up to 60 s for all engines to start before opening the stream
+        long deadline = System.currentTimeMillis() + 60_000;
+        while (!match.isFullyRunning() && match.isAlive() && System.currentTimeMillis() < deadline) {
+            try { Thread.sleep(200); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
+        }
+        if (!match.isFullyRunning()) return;
+        resp.setContentType("multipart/x-mixed-replace; boundary=" + MJPEG_BOUNDARY);
+        resp.setHeader("Cache-Control", "no-cache");
+        resp.setHeader("Connection", "close");
+        OutputStream out = resp.getOutputStream();
+        int seq = match.getPlayerFrameSeq(slot);
+        while (match.isFullyRunning()) {
+            try {
+                byte[] frame = match.waitForNextFrame(slot, seq, 2000);
+                if (frame == null) continue;
+                seq = match.getPlayerFrameSeq(slot);
+                writeFramePart(out, frame, match.getPlayerFrameContentType(slot));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            } catch (IOException e) {
+                break; // client disconnected
+            }
+        }
+    }
+
+    private void writeFramePart(OutputStream out, byte[] frame, String contentType) throws IOException {
+        out.write(MJPEG_DELIMITER);
+        String headers = "Content-Type: " + contentType + "\r\nContent-Length: " + frame.length + "\r\n\r\n";
+        out.write(headers.getBytes(StandardCharsets.US_ASCII));
+        out.write(frame);
+        out.write("\r\n".getBytes(StandardCharsets.US_ASCII));
+        out.flush();
     }
 
     /** GET /match/status?match=ID&session=UUID — match state as JSON. */
@@ -1125,7 +1247,7 @@ public class DoomInputServlet extends HttpServlet {
 
     // ── Match HTML page builders ──────────────────────────────────────────────
 
-    private static String buildMatchInitPage(String wad, String players, String warp, String skill, String format, String pwad) {
+    private static String buildMatchInitPage(String wad, String players, String warp, String skill, String format, String pwad, String matchId) {
         return "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
             + "<title>DOOM — Creating match...</title></head><body style='background:#1a1a1a;color:#0f0;font-family:monospace;padding:20px'>"
             + "<p>Initializing match...</p>"
@@ -1136,12 +1258,21 @@ public class DoomInputServlet extends HttpServlet {
             + "window.location.replace('/system/doom/match/create?session='+sid"
             + "+'&wad='+" + escapeJsString(wad)
             + "+'&players='+" + escapeJsString(players)
-            + (warp.isEmpty()   ? "" : "+'&warp='+"   + escapeJsString(warp))
-            + (skill.isEmpty()  ? "" : "+'&skill='+"  + escapeJsString(skill))
-            + (format.isEmpty() ? "" : "+'&format='+" + escapeJsString(format))
-            + (pwad.isEmpty()   ? "" : "+'&pwad='+"   + escapeJsString(pwad))
+            + (warp.isEmpty()    ? "" : "+'&warp='+"    + escapeJsString(warp))
+            + (skill.isEmpty()   ? "" : "+'&skill='+"   + escapeJsString(skill))
+            + (format.isEmpty()  ? "" : "+'&format='+"  + escapeJsString(format))
+            + (pwad.isEmpty()    ? "" : "+'&pwad='+"    + escapeJsString(pwad))
+            + (matchId.isEmpty() ? "" : "+'&matchId='+" + escapeJsString(matchId))
             + ");\n"
             + "</script></body></html>";
+    }
+
+    private static final String MATCH_ID_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    private static String generateMatchId() {
+        java.util.Random rng = new java.util.Random();
+        StringBuilder sb = new StringBuilder(6);
+        for (int i = 0; i < 6; i++) sb.append(MATCH_ID_CHARS.charAt(rng.nextInt(MATCH_ID_CHARS.length())));
+        return sb.toString();
     }
 
     private static String buildMatchJoinInitPage(String matchId, String wadName) {

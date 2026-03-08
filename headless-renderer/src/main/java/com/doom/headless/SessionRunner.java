@@ -50,15 +50,23 @@ public class SessionRunner implements ISessionRunner {
     private static final Logger logger = LoggerFactory.getLogger("DOOM.SessionRunner");
 
     // ── Frame output ─────────────────────────────────────────────────────────
-    private final AtomicReference<String> currentFrame  = new AtomicReference<>("");
-    private final AtomicInteger           frameCounter  = new AtomicInteger(0);
-    private final FrameEncoder            encoder       = new FrameEncoder(0.85f);
-    private volatile boolean              usePng        = false;
-    private volatile String               pwadPath      = null;
+    /** Sentinel only: "" (no frame), "GAME_ENDED". Never holds a data URI. */
+    private final AtomicReference<String> currentFrame      = new AtomicReference<>("");
+    /** Raw JPEG or PNG bytes of the latest rendered frame. */
+    private final AtomicReference<byte[]> currentFrameBytes = new AtomicReference<>(null);
+    private volatile String               frameContentType  = "image/jpeg";
+    /** Notified each time a new encoded frame is stored, or when the session ends. */
+    private final Object                  frameLock         = new Object();
+    private volatile int                  encodedFrameSeq   = 0;
+    private final AtomicInteger           frameCounter      = new AtomicInteger(0);
+    private final FrameEncoder            encoder           = new FrameEncoder(0.85f);
+    private volatile boolean              usePng            = false;
+    private volatile String               pwadPath          = null;
 
     @Override
     public void setFrameFormat(String format) {
         this.usePng = "png".equalsIgnoreCase(format);
+        this.frameContentType = this.usePng ? "image/png" : "image/jpeg";
     }
 
     @Override
@@ -229,7 +237,36 @@ public class SessionRunner implements ISessionRunner {
 
     @Override
     public String getCurrentFrame() {
-        return currentFrame.get();
+        if ("GAME_ENDED".equals(currentFrame.get())) return "GAME_ENDED";
+        return currentFrameBytes.get() != null ? "READY" : "";
+    }
+
+    @Override
+    public byte[] getCurrentFrameBytes() {
+        return currentFrameBytes.get();
+    }
+
+    @Override
+    public String getFrameContentType() {
+        return frameContentType;
+    }
+
+    @Override
+    public int getFrameSeq() {
+        return encodedFrameSeq;
+    }
+
+    @Override
+    public byte[] waitForNextFrame(int afterSeq, long timeoutMs) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        synchronized (frameLock) {
+            while (encodedFrameSeq <= afterSeq && running && !"GAME_ENDED".equals(currentFrame.get())) {
+                long remaining = deadline - System.currentTimeMillis();
+                if (remaining <= 0) return null;
+                frameLock.wait(remaining);
+            }
+        }
+        return currentFrameBytes.get();
     }
 
     @Override
@@ -425,8 +462,8 @@ public class SessionRunner implements ISessionRunner {
                 FrameData fd = pendingRawFrame.getAndSet(null);
                 if (fd != null) {
                     try {
-                        String uri = usePng ? encoder.toPNGDataURI(fd) : encoder.toDataURI(fd);
-                        currentFrame.set(uri);
+                        currentFrameBytes.set(usePng ? encoder.toPNG(fd) : encoder.toJPEG(fd));
+                        synchronized (frameLock) { encodedFrameSeq++; frameLock.notifyAll(); }
                     } catch (Exception e) {
                         logger.error("Error encoding frame", e);
                     }
@@ -566,6 +603,7 @@ public class SessionRunner implements ISessionRunner {
             // Only set if the engine fully initialized — avoids false positives on startup failure.
             if (initialized) {
                 currentFrame.set("GAME_ENDED");
+                synchronized (frameLock) { frameLock.notifyAll(); }
             }
             // Release latch so start() doesn't hang if init never completed
             initLatch.countDown();
@@ -591,6 +629,7 @@ public class SessionRunner implements ISessionRunner {
             } else if (wasInGame && gs == defines.gamestate_t.GS_DEMOSCREEN) {
                 logger.info("Game returned to title screen after playing — signalling GAME_ENDED");
                 currentFrame.set("GAME_ENDED");
+                synchronized (frameLock) { frameLock.notifyAll(); }
                 running = false;
                 return;
             }

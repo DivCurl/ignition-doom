@@ -209,10 +209,34 @@ public class MatchSession {
         return eng[slot];
     }
 
-    /** Returns the JPEG frame for the given player slot. */
+    /** Returns the frame sentinel for the given player slot ("", "READY", or "GAME_ENDED"). */
     public String getPlayerFrame(int slot) {
         DoomSession s = getSlotSessionByIndex(slot);
         return s != null ? s.getCurrentFrame() : "";
+    }
+
+    /** Returns raw frame bytes for the given player slot, or null if not yet available. */
+    public byte[] getPlayerFrameBytes(int slot) {
+        DoomSession s = getSlotSessionByIndex(slot);
+        return s != null ? s.getCurrentFrameBytes() : null;
+    }
+
+    /** Returns the MIME type for the given player slot's frames. */
+    public String getPlayerFrameContentType(int slot) {
+        DoomSession s = getSlotSessionByIndex(slot);
+        return s != null ? s.getFrameContentType() : "image/jpeg";
+    }
+
+    /** Current encoded frame sequence for the given slot (for use with waitForNextFrame). */
+    public int getPlayerFrameSeq(int slot) {
+        DoomSession s = getSlotSessionByIndex(slot);
+        return s != null ? s.getFrameSeq() : 0;
+    }
+
+    /** Blocks until a new encoded frame is available for the given slot. Returns null on timeout or session end. */
+    public byte[] waitForNextFrame(int slot, int afterSeq, long timeoutMs) throws InterruptedException {
+        DoomSession s = getSlotSessionByIndex(slot);
+        return s != null ? s.waitForNextFrame(afterSeq, timeoutMs) : null;
     }
 
     /** Updates pressed keys for the browser session (routed to that slot's engine). */

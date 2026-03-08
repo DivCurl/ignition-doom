@@ -58,8 +58,8 @@ public class DoomSession {
      */
     private volatile int pendingSkill = 2;
 
-    /** Frame encoding format: "png" (default) or "jpeg". Set before start(). */
-    private volatile String frameFormat = "png";
+    /** Frame encoding format: "jpeg" (default) or "png". Set before start(). */
+    private volatile String frameFormat = "jpeg";
 
     /** Optional PWAD/mod file path passed to the engine via -file. Null = no PWAD. */
     private volatile String pwadPath = null;
@@ -226,6 +226,29 @@ public class DoomSession {
         if (runner == null) return "";
         try { return runner.getCurrentFrame(); }
         catch (Exception e) { logger.warn("getCurrentFrame error: {}", e.getMessage()); return ""; }
+    }
+
+    public byte[] getCurrentFrameBytes() {
+        if (runner == null) return null;
+        try { return runner.getCurrentFrameBytes(); }
+        catch (Exception e) { return null; }
+    }
+
+    public String getFrameContentType() {
+        if (runner == null) return "image/jpeg";
+        try { return runner.getFrameContentType(); }
+        catch (Exception e) { return "image/jpeg"; }
+    }
+
+    public int getFrameSeq() {
+        if (runner == null) return 0;
+        try { return runner.getFrameSeq(); }
+        catch (Exception e) { return 0; }
+    }
+
+    public byte[] waitForNextFrame(int afterSeq, long timeoutMs) throws InterruptedException {
+        if (runner == null) return null;
+        return runner.waitForNextFrame(afterSeq, timeoutMs);
     }
 
     public int getFrameNumber() {

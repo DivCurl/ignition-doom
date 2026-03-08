@@ -10,34 +10,19 @@ Running DOOM natively inside Inductive Automation Ignition Perspective, with ser
 
 | Feature | Status |
 |---|---|
-| Single-player (all 5 WADs) — render, input, sound, music | ✅ Working |
-| Session isolation — up to 4 concurrent independent engines | ✅ Working |
-| WAD selection via URL param (`?wad=DOOM2`) | ✅ Working |
-| Browser emulated in-game console (`~` key) — warp, cheat, skill commands | ✅ Working |
-| P2P deathmatch — independent engine per player, lockstep sync | ✅ Working |
-| Per-player POV, HUD, positional audio, and music | ✅ Working |
-| Deathmatch respawn — geometric validation prevents void-space spawns | ✅ Working |
-| Level transitions — no screen wipe corruption, P2P lockstep continues | ✅ Working |
-| Disconnect resilience — remaining players continue on disconnect | ✅ Working |
-| Admin endpoint — session list + kill button + token auth | ✅ Working |
-| Self-hosted assets — zero external network dependencies | ✅ Working |
-| Game starts full-screen by default | ✅ Working |
-| Session landing page — browser UI for starting single-player and creating/joining deathmatch lobbies | ✅ Working |
-| PWAD / mod file support — load custom WADs alongside the base IWAD | ✅ Working |
-| PWAD auto-warp — game starts directly in MAP01/E1M1 without menu navigation | ✅ Working |
-| PWAD IWAD auto-detection — landing page detects and applies the required base WAD | ✅ Working |
-| Skill level selection — choosable per session on the landing page when a PWAD is loaded | ✅ Working |
-| End Game cleanup — browser shows "GAME ENDED" overlay when game is exited via in-game menu | ✅ Working |
+| Single-player — full rendering, input, SFX, and MIDI music across all supported WADs | ✅ Working |
+| P2P deathmatch — up to 4 players, independent engine per player, lockstep sync | ✅ Working |
+| PWAD / mod support — IWAD auto-detection, auto-warp to first map, skill selection | ✅ Working |
+| Session management — up to 4 concurrent sessions, idle reaping, admin controls | ✅ Working |
+| Self-hosted — all assets served from the gateway, zero external network dependencies | ✅ Working |
 
-## Planned
+## TODO
 
 | Feature | Status |
 |---|---|
-| Higher-fidelity MIDI playback — closer match to the classic DOOM score via improved SoundFont selection or tuning | 🔲 Planned |
-| Deathmatch hardening — netcode performance under high latency, spawn location edge cases | 🔲 Planned |
-| Linux testing — validate build, deployment, and gameplay on a Linux-hosted Ignition gateway | 🔲 Planned |
-| Ignition version compatibility — validate installation, module lifecycle, and gameplay across additional gateway versions beyond the currently tested 8.3.1 | 🔲 Planned |
-| PWAD compatibility — broader playtesting across community WADs and mod files to identify and resolve engine compatibility issues | 🔲 Planned |
+| Compatibility testing — Linux gateway, additional Ignition versions, community WADs | 🔲 Planned |
+| Deathmatch hardening — high-latency netcode, spawn edge cases | 🔲 Planned |
+| MIDI quality — improved SoundFont selection for a closer match to the classic score | 🔲 Planned |
 
 ---
 
@@ -45,7 +30,7 @@ Running DOOM natively inside Inductive Automation Ignition Perspective, with ser
 
 ```
 Browser
-  └─ GET /system/doom/frame          ← PNG frame (640×400, ~30–60 KB)
+  └─ GET /system/doom/frame/stream   ← MJPEG push stream (server pushes JPEG frames as rendered)
   └─ POST /system/doom/input         ← keyboard state (JS keyCodes)
   └─ GET /system/doom/sounds/events  ← positional sound events (JSON)
   └─ GET /system/doom/music/status   ← MUS→MIDI track state
@@ -76,8 +61,8 @@ Engine (per session, child ClassLoader)
 | Component | Technology |
 |---|---|
 | Game engine | Mocha DOOM (pure Java port of Chocolate Doom) |
-| Rendering | Palette-indexed software renderer, 640×400, PNG (JPEG optional via `?format=jpeg`) |
-| Transport | HTTP servlet (direct frame serving, no WebSocket, no tags) |
+| Rendering | Palette-indexed software renderer, 640×400, JPEG (PNG optional via `?format=png`) |
+| Transport | HTTP servlet — MJPEG push stream for frames, no WebSocket, no tags |
 | Multiplayer | P2P tikcmd-sync via TikcmdBus ring buffer |
 | Sound effects | DMX sounds from WAD, Web Audio API, 44100 Hz 16-bit |
 | Music | MUS→MIDI server-side, SoundFont playback browser-side |
@@ -233,7 +218,7 @@ All paths are relative to your Ignition gateway root (e.g. `http://localhost:808
 
 **Multiplayer (P2P tikcmd-sync)** — each player gets their own independent DOOM engine (`DoomSession`) running on its own thread. Engines share a `TikcmdBus` ring buffer (`common.jar`, parent classloader) and exchange 8-byte serialized tikcmds each game tic via `P2PNetDriver`. DOOM's deterministic simulation keeps all engines in lockstep. Each browser naturally gets the correct POV, HUD, sound, and music. Engines start in parallel background threads once all player slots are filled; browsers poll `/match/status` during the lobby.
 
-**Direct frame serving** — frames served via `GET /system/doom/frame?session=UUID` from an `AtomicReference<String>`. No WebSocket, no memory tags, no timer scripts.
+**MJPEG push streaming** — frames served via `GET /system/doom/frame/stream?session=UUID` as a `multipart/x-mixed-replace` stream. The server holds the response open and pushes each encoded JPEG as it's rendered, decoupling frame rate from browser round-trip time. No WebSocket, no memory tags, no polling.
 
 **Self-hosted audio** — all assets served from the Ignition gateway. `soundfont-player.min.js` bundled in `gateway.jar`. Instrument JS files on the gateway filesystem under `user-lib/doom/soundfonts/`. Zero external network dependencies — works air-gapped.
 

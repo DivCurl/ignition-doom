@@ -51,8 +51,29 @@ public interface ISessionRunner {
     /** Optional PWAD/mod file path to load via -file. Null means no PWAD. Set before start(). */
     default void setPwadPath(String path) {}
 
-    /** Current frame as a data URI, or "" before first render. */
+    /**
+     * Sentinel value only: "" (no frame yet), "READY" (frame bytes available),
+     * or "GAME_ENDED" (engine exited). Does NOT return a data URI.
+     */
     String getCurrentFrame();
+
+    /** Raw JPEG or PNG bytes of the current frame. Null if no frame yet. */
+    default byte[] getCurrentFrameBytes() { return null; }
+
+    /** MIME type for getCurrentFrameBytes(): "image/jpeg" or "image/png". */
+    default String getFrameContentType() { return "image/jpeg"; }
+
+    /**
+     * Monotonically increasing counter incremented each time a new encoded frame is stored.
+     * Use as the `afterSeq` argument to waitForNextFrame().
+     */
+    default int getFrameSeq() { return 0; }
+
+    /**
+     * Blocks until an encoded frame with sequence > afterSeq is available, then returns its bytes.
+     * Returns null on timeout or if the session ends with no new frame.
+     */
+    default byte[] waitForNextFrame(int afterSeq, long timeoutMs) throws InterruptedException { return null; }
 
     /** Total frames rendered so far. */
     int getFrameNumber();
