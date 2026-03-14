@@ -628,6 +628,7 @@ public class SessionRunner implements ISessionRunner {
                 wasInGame = true;
             } else if (wasInGame && gs == defines.gamestate_t.GS_DEMOSCREEN) {
                 logger.info("Game returned to title screen after playing — signalling GAME_ENDED");
+                wasInGame = false;
                 currentFrame.set("GAME_ENDED");
                 synchronized (frameLock) { frameLock.notifyAll(); }
                 running = false;

@@ -106,6 +106,11 @@ public class DoomInputServlet extends HttpServlet {
             if (session == null) return;
             serveSoundList(session, resp);
 
+        } else if (path.contains("events/stream")) {
+            DoomSession session = resolveRunningSession(req, resp);
+            if (session == null) return;
+            streamSoundEvents(session, resp);
+
         } else if (path.contains("events")) {
             DoomSession session = resolveRunningSession(req, resp);
             if (session == null) return;
@@ -176,14 +181,19 @@ public class DoomInputServlet extends HttpServlet {
 
         if (path.contains("/match")) {
             handleMatchPost(path, req, resp);
+        } else if (path.contains("admin/regen")) {
+            serveAdminRegen(req, resp);
+        } else if (path.contains("auth")) {
+            handlePlayAuth(req, resp);
         } else if (path.contains("console")) {
             DoomSession session = resolveRunningSession(req, resp);
             if (session == null) return;
             serveConsoleCommand(session, req, resp);
+        } else if (path.contains("input/stream")) {
+            handleStreamingInput(req, resp);
         } else {
-            // Default: keyboard input — POST /system/doom/input?session=UUID
-            resp.setContentType("text/plain");
-
+            // Default: keyboard input. Sound events are delivered via SSE (/events/stream).
+            // POST /system/doom/input?session=UUID  →  200 OK (no body)
             String body = new String(req.getInputStream().readAllBytes()).trim();
             Set<Integer> currentKeys = new HashSet<>();
             if (!body.isEmpty()) {
@@ -192,12 +202,11 @@ public class DoomInputServlet extends HttpServlet {
                     catch (NumberFormatException ignored) {}
                 }
             }
-
             DoomSession session = resolveSession(req);
             if (session != null) {
                 session.updatePressedKeys(currentKeys);
             }
-            resp.getWriter().write("ok");
+            resp.setStatus(HttpServletResponse.SC_OK);
         }
     }
 
@@ -207,6 +216,47 @@ public class DoomInputServlet extends HttpServlet {
         resp.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
         resp.setHeader("Access-Control-Allow-Headers", "Content-Type");
         resp.setStatus(200);
+    }
+
+    // ── /auth — play password exchange ───────────────────────────────────────
+
+    /**
+     * POST /system/doom/auth  (body: plain-text password)
+     * Validates the play password and returns a short-lived play token as JSON.
+     * 200 {"token":"<hex>"} on success, 401 on bad password, 503 if not ready.
+     */
+    private void handlePlayAuth(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        resp.setHeader("Cache-Control", "no-store");
+        SessionManager sm = GatewayHook.getSessionManager();
+        if (sm == null) { resp.setStatus(503); return; }
+
+        String body = new String(req.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+        if (sm.validatePlayPassword(body)) {
+            String token = sm.issuePlayToken();
+            resp.setContentType("application/json");
+            resp.getWriter().write("{\"token\":\"" + token + "\"}");
+        } else {
+            resp.setStatus(401);
+            resp.setContentType("text/plain");
+            resp.getWriter().write("Incorrect password");
+        }
+    }
+
+    /**
+     * Validates the ?auth= play token on a request.
+     * Writes 403 and returns false if the token is missing or invalid.
+     */
+    private boolean checkPlayAuth(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        SessionManager sm = GatewayHook.getSessionManager();
+        if (sm == null) { resp.setStatus(503); return false; }
+        String token = req.getParameter("auth");
+        if (!sm.validatePlayToken(token)) {
+            resp.setStatus(403);
+            resp.setContentType("application/json");
+            resp.getWriter().write("{\"error\":\"auth_required\"}");
+            return false;
+        }
+        return true;
     }
 
     // ── /play — session creation/resume ──────────────────────────────────────
@@ -222,6 +272,7 @@ public class DoomInputServlet extends HttpServlet {
      *                 refreshed page → reuses existing one from sessionStorage).
      */
     private void servePlayPage(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        if (!checkPlayAuth(req, resp)) return;
         String sessionId  = req.getParameter("session");
         String wadName    = req.getParameter("wad");
         String pwadName   = req.getParameter("pwad");
@@ -297,9 +348,24 @@ public class DoomInputServlet extends HttpServlet {
             return;
         }
         String killedId = req.getParameter("killed");
+        String regenDone = req.getParameter("regen");
         resp.setContentType("text/html; charset=UTF-8");
         resp.setHeader("Cache-Control", "no-cache, no-store");
-        resp.getWriter().write(buildAdminPage(sm, token, killedId));
+        resp.getWriter().write(buildAdminPage(sm, token, killedId, regenDone != null));
+    }
+
+    private void serveAdminRegen(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        SessionManager sm = GatewayHook.getSessionManager();
+        if (sm == null) { resp.setStatus(503); return; }
+        String token = req.getParameter("token");
+        if (!sm.validateAdminToken(token)) {
+            resp.setStatus(403);
+            resp.setContentType("text/html; charset=UTF-8");
+            resp.getWriter().write(buildAdminForbiddenPage());
+            return;
+        }
+        sm.regeneratePlayPassword();
+        resp.sendRedirect("/system/doom/admin?token=" + token + "&regen=1");
     }
 
     private void serveAdminKill(HttpServletRequest req, HttpServletResponse resp) throws IOException {
@@ -328,7 +394,7 @@ public class DoomInputServlet extends HttpServlet {
         resp.sendRedirect("/system/doom/admin?token=" + token + "&killed=" + escUrl(sessionId));
     }
 
-    private String buildAdminPage(SessionManager sm, String token, String killedId) {
+    private String buildAdminPage(SessionManager sm, String token, String killedId, boolean regenDone) {
         long uptimeSec = sm.getUptimeSec();
         long uptimeMin = uptimeSec / 60;
         long uptimeHr  = uptimeMin / 60;
@@ -359,6 +425,8 @@ public class DoomInputServlet extends HttpServlet {
         h.append(".empty{color:#888;padding:24px 14px}\n");
         h.append(".refresh{color:#777;font-size:12px;text-decoration:none;margin-left:16px}\n");
         h.append(".refresh:hover{color:#aaa}\n");
+        h.append(".regen-btn{background:#1a1a00;color:#ffcc00;border:1px solid #665500;padding:4px 12px;font-family:'Courier New',monospace;font-size:11px;letter-spacing:1px;text-transform:uppercase;cursor:pointer;margin-left:12px}\n");
+        h.append(".regen-btn:hover{background:#332200;color:#ffe066}\n");
         h.append("</style></head><body>\n");
 
         // Header block
@@ -371,6 +439,18 @@ public class DoomInputServlet extends HttpServlet {
         h.append("    </div>\n");
         h.append("  </div>\n");
         h.append("</div>\n");
+
+        // Credentials info
+        if (regenDone) {
+            h.append("<div class='notice'>Play password regenerated. All existing browser tokens have been revoked.</div><br>\n");
+        }
+        h.append("<div class='stats' style='margin-bottom:8px;display:flex;align-items:center;gap:0'>")
+         .append("<span style='color:#888'>Play password:</span>&nbsp;")
+         .append("<code style='color:#ffcc00;letter-spacing:2px'>").append(escHtml(sm.getPlayPassword())).append("</code>")
+         .append("<form method='POST' action='/system/doom/admin/regen?token=").append(escHtml(token)).append("' style='display:inline;margin:0'>")
+         .append("<button type='submit' class='regen-btn'>Regenerate</button>")
+         .append("</form>")
+         .append("</div>\n");
 
         // Stats bar
         h.append("<div class='stats'>Active: ").append(active.size()).append(" / ").append(SessionManager.MAX_SESSIONS);
@@ -518,24 +598,137 @@ public class DoomInputServlet extends HttpServlet {
     // ── /events ───────────────────────────────────────────────────────────────
 
     private void serveSoundEvents(DoomSession session, HttpServletResponse resp) throws IOException {
-        SoundEventDTO[] events = session.pollSoundEvents();
-
-        StringBuilder json = new StringBuilder("[");
-        for (int i = 0; i < events.length; i++) {
-            if (i > 0) json.append(",");
-            SoundEventDTO ev = events[i];
-            json.append("{")
-                .append("\"name\":\"").append(escapeJson(ev.sfxName)).append("\",")
-                .append("\"volume\":").append(ev.volume).append(",")
-                .append("\"separation\":").append(ev.separation).append(",")
-                .append("\"pitch\":").append(ev.pitch)
-                .append("}");
-        }
-        json.append("]");
-
         resp.setContentType("application/json; charset=UTF-8");
         resp.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-        resp.getWriter().write(json.toString());
+        resp.getWriter().write(buildSoundEventsJson(session.pollSoundEvents()));
+    }
+
+    private String buildSoundEventsJson(SoundEventDTO[] events) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < events.length; i++) {
+            if (i > 0) sb.append(",");
+            SoundEventDTO ev = events[i];
+            sb.append("{\"name\":\"").append(escapeJson(ev.sfxName)).append("\",")
+              .append("\"volume\":").append(ev.volume).append(",")
+              .append("\"separation\":").append(ev.separation).append(",")
+              .append("\"pitch\":").append(ev.pitch).append("}");
+        }
+        return sb.append("]").toString();
+    }
+
+    // ── SSE sound+music events stream ─────────────────────────────────────────
+
+    /**
+     * GET /system/doom/events/stream?session=UUID
+     * Server-Sent Events stream: sound events, music state changes, and latency pings.
+     * Eliminates the 50ms heartbeat POST and the 500ms music status poll.
+     * Blocks the Jetty thread for the session lifetime (acceptable for MAX_SESSIONS=4).
+     */
+    private void streamSoundEvents(DoomSession session, HttpServletResponse resp) throws IOException {
+        resp.setContentType("text/event-stream; charset=UTF-8");
+        resp.setHeader("Cache-Control", "no-cache");
+        resp.setHeader("Connection", "close");
+        resp.setHeader("X-Accel-Buffering", "no");
+        resp.flushBuffer();
+        java.io.PrintWriter out = resp.getWriter();
+
+        MusicStateDTO lastSentMusic = null;
+        long lastPingMs = 0;
+
+        while (session.isRunning()) {
+            boolean wrote = false;
+
+            SoundEventDTO[] events = session.pollSoundEvents();
+            if (events.length > 0) {
+                out.print("event: sound\ndata: " + buildSoundEventsJson(events) + "\n\n");
+                wrote = true;
+            }
+
+            MusicStateDTO music = session.peekMusicState();
+            if (music != null && music != lastSentMusic) {
+                lastSentMusic = music;
+                out.print("event: music\ndata: {\"playing\":" + music.playing
+                    + ",\"changed\":true,\"looping\":" + music.looping
+                    + ",\"volume\":" + music.volume + "}\n\n");
+                wrote = true;
+            }
+
+            long now = System.currentTimeMillis();
+            if (now - lastPingMs >= 2000) {
+                out.print("event: ping\ndata: " + now + "\n\n");
+                lastPingMs = now;
+                wrote = true;
+            }
+
+            if (wrote) {
+                out.flush();
+                if (out.checkError()) break;
+            }
+
+            try { Thread.sleep(10); }
+            catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
+        }
+    }
+
+    /**
+     * GET /system/doom/match/events/stream?match=ID&session=UUID
+     * Same as streamSoundEvents() but for a deathmatch player slot.
+     * Waits up to 60s for all engines to start before opening the stream.
+     */
+    private void streamMatchSoundEvents(MatchSession match, String browserSid,
+                                        HttpServletResponse resp) throws IOException {
+        long deadline = System.currentTimeMillis() + 60_000;
+        while (!match.isFullyRunning() && match.isAlive() && System.currentTimeMillis() < deadline) {
+            try { Thread.sleep(200); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
+        }
+        if (!match.isFullyRunning()) return;
+
+        DoomSession slotSession = match.getSlotSession(browserSid);
+        if (slotSession == null) return;
+
+        resp.setContentType("text/event-stream; charset=UTF-8");
+        resp.setHeader("Cache-Control", "no-cache");
+        resp.setHeader("Connection", "close");
+        resp.setHeader("X-Accel-Buffering", "no");
+        resp.flushBuffer();
+        java.io.PrintWriter out = resp.getWriter();
+
+        MusicStateDTO lastSentMusic = null;
+        long lastPingMs = 0;
+
+        while (match.isFullyRunning()) {
+            boolean wrote = false;
+
+            SoundEventDTO[] events = slotSession.pollSoundEvents();
+            if (events.length > 0) {
+                out.print("event: sound\ndata: " + buildSoundEventsJson(events) + "\n\n");
+                wrote = true;
+            }
+
+            MusicStateDTO music = slotSession.peekMusicState();
+            if (music != null && music != lastSentMusic) {
+                lastSentMusic = music;
+                out.print("event: music\ndata: {\"playing\":" + music.playing
+                    + ",\"changed\":true,\"looping\":" + music.looping
+                    + ",\"volume\":" + music.volume + "}\n\n");
+                wrote = true;
+            }
+
+            long now = System.currentTimeMillis();
+            if (now - lastPingMs >= 2000) {
+                out.print("event: ping\ndata: " + now + "\n\n");
+                lastPingMs = now;
+                wrote = true;
+            }
+
+            if (wrote) {
+                out.flush();
+                if (out.checkError()) break;
+            }
+
+            try { Thread.sleep(10); }
+            catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
+        }
     }
 
     // ── /music/status ─────────────────────────────────────────────────────────
@@ -854,6 +1047,12 @@ public class DoomInputServlet extends HttpServlet {
             // the browser retry loop from ever seeing the real list.
             resp.setHeader("Cache-Control", "no-store, no-cache");
             resp.getWriter().write(sndJson.toString());
+        } else if (path.contains("/events/stream")) {
+            MatchSession match = resolveRunningMatch(req, resp);
+            if (match == null) return;
+            String sid = req.getParameter("session");
+            streamMatchSoundEvents(match, sid, resp);
+
         } else if (path.contains("/events")) {
             MatchSession match = resolveRunningMatch(req, resp);
             if (match == null) return;
@@ -901,9 +1100,11 @@ public class DoomInputServlet extends HttpServlet {
             MatchSession match = resolveRunningMatch(req, resp);
             if (match == null) return;
             serveMatchConsoleCommand(match, req, resp);
+        } else if (path.contains("input/stream")) {
+            handleMatchStreamingInput(req, resp);
         } else {
-            // Default: keyboard input  POST /match/input?match=ID&session=UUID
-            resp.setContentType("text/plain");
+            // Default: keyboard input. Sound events are delivered via SSE (/match/events/stream).
+            // POST /match/input?match=ID&session=UUID  →  200 OK (no body)
             String body = new String(req.getInputStream().readAllBytes()).trim();
             Set<Integer> currentKeys = new HashSet<>();
             if (!body.isEmpty()) {
@@ -917,9 +1118,11 @@ public class DoomInputServlet extends HttpServlet {
             SessionManager sm = GatewayHook.getSessionManager();
             if (sm != null && matchId != null && sid != null) {
                 MatchSession match = sm.getMatch(matchId);
-                if (match != null) match.updatePressedKeys(sid, currentKeys);
+                if (match != null) {
+                    match.updatePressedKeys(sid, currentKeys);
+                }
             }
-            resp.getWriter().write("ok");
+            resp.setStatus(HttpServletResponse.SC_OK);
         }
     }
 
@@ -929,6 +1132,7 @@ public class DoomInputServlet extends HttpServlet {
      */
     private void serveMatchCreate(HttpServletRequest req, HttpServletResponse resp)
             throws IOException {
+        if (!checkPlayAuth(req, resp)) return;
         String sessionId = req.getParameter("session");
         if (sessionId == null || !sessionId.matches(
                 "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")) {
@@ -1025,11 +1229,13 @@ public class DoomInputServlet extends HttpServlet {
             return;
         }
 
-        // Assign slot 0 to the creator and redirect to /match/join
+        // Assign slot 0 to the creator and redirect to /match/join (carry auth token)
+        String authToken = req.getParameter("auth");
         resp.sendRedirect("/system/doom/match/join?match=" + matchId
             + "&session=" + sessionId + "&wad=" + escUrl(wadName)
             + ("jpeg".equals(frameFormat) ? "&format=jpeg" : "")
-            + (pwadName != null && !pwadName.isBlank() ? "&pwad=" + escUrl(pwadName) : ""));
+            + (pwadName != null && !pwadName.isBlank() ? "&pwad=" + escUrl(pwadName) : "")
+            + (authToken != null ? "&auth=" + escUrl(authToken) : ""));
     }
 
     /**
@@ -1038,6 +1244,7 @@ public class DoomInputServlet extends HttpServlet {
      */
     private void serveMatchJoin(HttpServletRequest req, HttpServletResponse resp)
             throws IOException {
+        if (!checkPlayAuth(req, resp)) return;
         String sessionId = req.getParameter("session");
         String matchId   = req.getParameter("match");
         String wadName   = req.getParameter("wad");
@@ -1046,7 +1253,7 @@ public class DoomInputServlet extends HttpServlet {
         if (sessionId == null || !sessionId.matches(
                 "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")) {
             resp.setContentType("text/html; charset=UTF-8");
-            resp.getWriter().write(buildMatchJoinInitPage(matchId, wadName));
+            resp.getWriter().write(buildMatchJoinInitPage(matchId, wadName, req.getParameter("auth")));
             return;
         }
 
@@ -1255,6 +1462,7 @@ public class DoomInputServlet extends HttpServlet {
             + "function uuid4() { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,function(c){var r=Math.random()*16|0,v=c=='x'?r:(r&0x3|0x8);return v.toString(16);}); }\n"
             + "var sid = sessionStorage.getItem('doomSessionId') || uuid4();\n"
             + "sessionStorage.setItem('doomSessionId', sid);\n"
+            + "var auth = sessionStorage.getItem('doomPlayToken') || '';\n"
             + "window.location.replace('/system/doom/match/create?session='+sid"
             + "+'&wad='+" + escapeJsString(wad)
             + "+'&players='+" + escapeJsString(players)
@@ -1263,6 +1471,7 @@ public class DoomInputServlet extends HttpServlet {
             + (format.isEmpty()  ? "" : "+'&format='+"  + escapeJsString(format))
             + (pwad.isEmpty()    ? "" : "+'&pwad='+"    + escapeJsString(pwad))
             + (matchId.isEmpty() ? "" : "+'&matchId='+" + escapeJsString(matchId))
+            + "+(auth?'&auth='+encodeURIComponent(auth):'')"
             + ");\n"
             + "</script></body></html>";
     }
@@ -1275,7 +1484,9 @@ public class DoomInputServlet extends HttpServlet {
         return sb.toString();
     }
 
-    private static String buildMatchJoinInitPage(String matchId, String wadName) {
+    private static String buildMatchJoinInitPage(String matchId, String wadName, String authToken) {
+        // Auth token is server-injected so it survives into a fresh browser tab where sessionStorage is empty.
+        String safeAuth = (authToken != null && !authToken.isEmpty()) ? escUrl(authToken) : "";
         return "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
             + "<title>DOOM — Joining match...</title></head><body style='background:#1a1a1a;color:#0f0;font-family:monospace;padding:20px'>"
             + "<p>Joining match...</p>"
@@ -1283,11 +1494,80 @@ public class DoomInputServlet extends HttpServlet {
             + "function uuid4() { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,function(c){var r=Math.random()*16|0,v=c=='x'?r:(r&0x3|0x8);return v.toString(16);}); }\n"
             + "var sid = sessionStorage.getItem('doomSessionId') || uuid4();\n"
             + "sessionStorage.setItem('doomSessionId', sid);\n"
+            + "var _serverAuth = " + escapeJsString(safeAuth) + ";\n"
+            + "var auth = _serverAuth || sessionStorage.getItem('doomPlayToken') || '';\n"
+            + "if (auth) sessionStorage.setItem('doomPlayToken', auth);\n"
             + "window.location.replace('/system/doom/match/join?session='+sid"
             + "+'&match='+" + escapeJsString(matchId != null ? matchId : "")
             + "+'&wad='+"   + escapeJsString(wadName)
+            + "+(auth?'&auth='+encodeURIComponent(auth):'')"
             + ");\n"
             + "</script></body></html>";
+    }
+
+    // ── Streaming input handlers (Option C) ──────────────────────────────────
+
+    /**
+     * POST /system/doom/input/stream?session=UUID
+     * Accepts a persistent chunked-encoded request body. Each newline-delimited
+     * line is a comma-separated list of pressed keyCodes; the server updates the
+     * session's key state on every line. Runs until the client disconnects or the
+     * session ends. Requires browser support for fetch() with duplex:'half'.
+     */
+    private void handleStreamingInput(HttpServletRequest req, HttpServletResponse resp)
+            throws IOException {
+        DoomSession session = resolveSession(req);
+        if (session == null) { resp.setStatus(404); return; }
+        resp.setStatus(200);
+        resp.setContentType("text/plain");
+        resp.flushBuffer();
+        try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                new java.io.InputStreamReader(req.getInputStream(), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (!session.isRunning()) break;
+                Set<Integer> keys = new HashSet<>();
+                if (!line.trim().isEmpty()) {
+                    for (String s : line.split(",")) {
+                        try { keys.add(Integer.parseInt(s.trim())); }
+                        catch (NumberFormatException ignored) {}
+                    }
+                }
+                session.updatePressedKeys(keys);
+            }
+        } catch (IOException ignored) { /* client disconnected */ }
+    }
+
+    /**
+     * POST /system/doom/match/input/stream?match=ID&session=UUID
+     * Same as handleStreamingInput but for a deathmatch slot session.
+     */
+    private void handleMatchStreamingInput(HttpServletRequest req, HttpServletResponse resp)
+            throws IOException {
+        String matchId = req.getParameter("match");
+        String sid     = req.getParameter("session");
+        SessionManager sm = GatewayHook.getSessionManager();
+        if (sm == null || matchId == null || sid == null) { resp.setStatus(400); return; }
+        MatchSession match = sm.getMatch(matchId);
+        if (match == null) { resp.setStatus(404); return; }
+        resp.setStatus(200);
+        resp.setContentType("text/plain");
+        resp.flushBuffer();
+        try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                new java.io.InputStreamReader(req.getInputStream(), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (!match.isRunning()) break;
+                Set<Integer> keys = new HashSet<>();
+                if (!line.trim().isEmpty()) {
+                    for (String s : line.split(",")) {
+                        try { keys.add(Integer.parseInt(s.trim())); }
+                        catch (NumberFormatException ignored) {}
+                    }
+                }
+                match.updatePressedKeys(sid, keys);
+            }
+        } catch (IOException ignored) { /* client disconnected */ }
     }
 
     // ── Session resolution helpers ────────────────────────────────────────────
@@ -1362,7 +1642,8 @@ public class DoomInputServlet extends HttpServlet {
             + "var sid = sessionStorage.getItem('doomSessionId') || uuid4();\n"
             + "sessionStorage.setItem('doomSessionId', sid);\n"
             + "var wad = " + escapeJsString(wadName) + ";\n"
-            + "window.location.replace('/system/doom/play?session=' + sid + '&wad=' + encodeURIComponent(wad) + '&skill=" + skill + "'" + fmtParam + pwadParam + ");\n"
+            + "var auth = sessionStorage.getItem('doomPlayToken') || '';\n"
+            + "window.location.replace('/system/doom/play?session=' + sid + '&wad=' + encodeURIComponent(wad) + '&skill=" + skill + "'" + fmtParam + pwadParam + " + (auth ? '&auth=' + encodeURIComponent(auth) : ''));\n"
             + "</script></body></html>";
     }
 

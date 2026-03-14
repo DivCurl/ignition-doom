@@ -111,12 +111,17 @@ if errorlevel 1 (
     echo      WARNING: Asset deployment reported errors - check output above.
 )
 
-REM Step 6: Enable unsigned modules
+REM Step 6: Enable unsigned modules and set heap memory
 echo.
-echo [6/7] Enabling unsigned module installation...
+echo [6/7] Enabling unsigned module installation and setting heap memory...
 docker exec %CONTAINER_NAME% bash -c "echo 'wrapper.java.additional.9=-Dignition.allowunsignedmodules=true' >> /usr/local/bin/ignition/data/ignition.conf"
 if errorlevel 1 (
     echo      ERROR: Failed to update configuration
+    goto :error
+)
+docker exec %CONTAINER_NAME% bash -c "echo 'wrapper.java.maxmemory=3072' >> /usr/local/bin/ignition/data/ignition.conf"
+if errorlevel 1 (
+    echo      ERROR: Failed to set heap memory
     goto :error
 )
 
@@ -127,6 +132,12 @@ if errorlevel 1 (
     goto :error
 )
 echo      Unsigned modules enabled
+docker exec %CONTAINER_NAME% bash -c "grep 'wrapper.java.maxmemory' /usr/local/bin/ignition/data/ignition.conf" >nul 2>&1
+if errorlevel 1 (
+    echo      ERROR: Heap memory configuration verification failed
+    goto :error
+)
+echo      Heap memory set to 3072 MB
 
 REM Step 7: Restart container to apply configuration
 echo.

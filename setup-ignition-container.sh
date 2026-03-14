@@ -108,15 +108,21 @@ echo "      Running deploy-assets.sh to copy WADs, soundfonts, and branding..."
 echo ""
 bash "$(dirname "$0")/deploy-assets.sh" "$CONTAINER_NAME" || echo -e "      ${YELLOW}WARNING: Asset deployment reported errors - check output above.${NC}"
 
-# Step 6: Enable unsigned modules
+# Step 6: Enable unsigned modules and set heap memory
 echo ""
-echo "[6/7] Enabling unsigned module installation..."
-if docker exec "$CONTAINER_NAME" bash -c "echo 'wrapper.java.additional.9=-Dignition.allowunsignedmodules=true' >> /usr/local/bin/ignition/data/ignition.conf"; then
+echo "[6/7] Enabling unsigned module installation and setting heap memory..."
+if docker exec "$CONTAINER_NAME" bash -c "echo 'wrapper.java.additional.9=-Dignition.allowunsignedmodules=true' >> /usr/local/bin/ignition/data/ignition.conf && echo 'wrapper.java.maxmemory=3072' >> /usr/local/bin/ignition/data/ignition.conf"; then
     # Verify configuration
     if docker exec "$CONTAINER_NAME" bash -c "grep 'allowunsignedmodules' /usr/local/bin/ignition/data/ignition.conf" >/dev/null 2>&1; then
         echo -e "      ${GREEN}Unsigned modules enabled${NC}"
     else
         echo -e "      ${RED}ERROR: Configuration verification failed${NC}"
+        exit 1
+    fi
+    if docker exec "$CONTAINER_NAME" bash -c "grep 'wrapper.java.maxmemory' /usr/local/bin/ignition/data/ignition.conf" >/dev/null 2>&1; then
+        echo -e "      ${GREEN}Heap memory set to 3072 MB${NC}"
+    else
+        echo -e "      ${RED}ERROR: Heap memory configuration verification failed${NC}"
         exit 1
     fi
 else

@@ -28,6 +28,7 @@ import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -62,6 +63,8 @@ public class SessionManager {
 
     private final URL    headlessRendererJar;
     private final String adminToken;
+    private volatile String playPassword;
+    private final ConcurrentHashMap<String, Boolean> playTokens = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, DoomSession>          sessions   = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, MatchSession>         matches    = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Map<String, byte[]>>  soundCaches        = new ConcurrentHashMap<>();
@@ -77,17 +80,26 @@ public class SessionManager {
     public SessionManager(URL headlessRendererJar) {
         this.headlessRendererJar = headlessRendererJar;
 
+        SecureRandom rng = new SecureRandom();
+
         // Generate a random 16-hex-char admin token. Printed once to the gateway log
         // so the administrator can read it and use it to access /system/doom/admin.
         byte[] tokenBytes = new byte[8];
-        new SecureRandom().nextBytes(tokenBytes);
+        rng.nextBytes(tokenBytes);
         this.adminToken = bytesToHex(tokenBytes);
+
+        // Generate a random 12-hex-char play password. Required by browser clients to
+        // start or join any game session. Printed once to the gateway log on startup.
+        byte[] pwBytes = new byte[6];
+        rng.nextBytes(pwBytes);
+        this.playPassword = bytesToHex(pwBytes).toUpperCase();
 
         logger.info("SessionManager init — headless-renderer.jar: {}", headlessRendererJar);
         logger.info("SessionManager init — WAD directory:          {}", WAD_DIR);
         logger.info("SessionManager init — max sessions:           {}", MAX_SESSIONS);
         logger.info("SessionManager init — idle timeout:           {} ms", IDLE_TIMEOUT_MS);
-        logger.info("DOOM Admin token: {}  (use at /system/doom/admin?token=...)", adminToken);
+        logger.info("DOOM Admin token:    {}  (use at /system/doom/admin?token=...)", adminToken);
+        logger.info("DOOM Play password:  {}  (required to start/join games at /system/doom)", playPassword);
 
         reaper = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "DOOM-SessionReaper");
@@ -164,6 +176,18 @@ public class SessionManager {
 
         logger.info("Session created successfully: {} (active sessions: {})",
             sessionId, sessions.values().stream().filter(DoomSession::isRunning).count());
+
+        // Proactively warm the sound cache in the background so it is ready before the
+        // browser requests /sounds. Without this, the first /sounds request blocks a
+        // Jetty thread for the full cache-build duration (10–60 s on a cold JVM).
+        final String warmWadPath = wadPath;
+        Thread soundWarmThread = new Thread(() -> {
+            logger.info("Warming sound cache for session {} (wad={})", sessionId, warmWadPath);
+            getSoundCache(warmWadPath);
+        }, "DOOM-SoundWarm-" + sessionId);
+        soundWarmThread.setDaemon(true);
+        soundWarmThread.start();
+
         return session;
     }
 
@@ -674,6 +698,47 @@ public class SessionManager {
 
     /** Returns the admin token (used by servlet to embed it in redirect URLs). */
     public String getAdminToken() { return adminToken; }
+
+    /** Returns the play password (displayed on the admin page). */
+    public String getPlayPassword() { return playPassword; }
+
+    /** Validates a play password supplied by the browser. Timing-safe comparison. */
+    public boolean validatePlayPassword(String pw) {
+        if (pw == null || pw.isEmpty()) return false;
+        return MessageDigest.isEqual(
+            pw.toUpperCase().getBytes(StandardCharsets.UTF_8),
+            playPassword.getBytes(StandardCharsets.UTF_8)
+        );
+    }
+
+    /**
+     * Issues a play token after successful password validation.
+     * Tokens remain valid until {@link #regeneratePlayPassword()} is called.
+     */
+    public String issuePlayToken() {
+        String token = UUID.randomUUID().toString().replace("-", "");
+        playTokens.put(token, Boolean.TRUE);
+        return token;
+    }
+
+    /** Returns true if the token was issued by this manager and has not been revoked. */
+    public boolean validatePlayToken(String token) {
+        if (token == null || token.isEmpty()) return false;
+        return playTokens.containsKey(token);
+    }
+
+    /**
+     * Generates a new play password and revokes all existing play tokens.
+     * Returns the new password so the caller can display or log it.
+     */
+    public String regeneratePlayPassword() {
+        byte[] pwBytes = new byte[6];
+        new SecureRandom().nextBytes(pwBytes);
+        playPassword = bytesToHex(pwBytes).toUpperCase();
+        playTokens.clear();
+        logger.info("DOOM Play password regenerated: {}  (all existing tokens revoked)", playPassword);
+        return playPassword;
+    }
 
     /** Returns seconds elapsed since this SessionManager was created. */
     public long getUptimeSec() { return (System.currentTimeMillis() - startTimeMs) / 1000; }
