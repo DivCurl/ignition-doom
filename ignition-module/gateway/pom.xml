@@ -54,6 +54,20 @@
             <artifactId>jakarta.servlet-api</artifactId>
         </dependency>
 
+        <!-- Jetty WebSocket (provided: available in Ignition's Jetty 12.0.15 EE10 runtime) -->
+        <dependency>
+            <groupId>org.eclipse.jetty.ee10.websocket</groupId>
+            <artifactId>jetty-ee10-websocket-jetty-server</artifactId>
+            <version>12.0.15</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.jetty.websocket</groupId>
+            <artifactId>jetty-websocket-jetty-api</artifactId>
+            <version>12.0.15</version>
+            <scope>provided</scope>
+        </dependency>
+
         <!-- Logging -->
         <dependency>
             <groupId>org.slf4j</groupId>

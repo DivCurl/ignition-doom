@@ -96,6 +96,7 @@ set INSTRUMENTS=^
   electric_bass_finger ^
   electric_bass_pick ^
   slap_bass_1 ^
+  slap_bass_2 ^
   synth_bass_1 ^
   synth_bass_2 ^
   string_ensemble_1 ^
@@ -118,6 +119,7 @@ set INSTRUMENTS=^
   fx_7_echoes ^
   timpani ^
   melodic_tom ^
+  synth_drum ^
   reverse_cymbal ^
   guitar_fret_noise
 

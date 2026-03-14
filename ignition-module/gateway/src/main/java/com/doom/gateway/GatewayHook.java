@@ -72,12 +72,19 @@ public class GatewayHook extends AbstractGatewayModuleHook {
             logger.error("DOOM: SessionManager init failed — sessions unavailable. Error: {}", e.getMessage(), e);
         }
 
-        // Register servlet — this is the only other startup operation
+        // Register servlets
         try {
             gatewayContext.getWebResourceManager().addServlet("doom", DoomInputServlet.class);
             logger.info("DOOM: Servlet registered at /system/doom/*");
         } catch (Exception e) {
-            logger.error("DOOM: Failed to register servlet", e);
+            logger.error("DOOM: Failed to register doom servlet", e);
+        }
+
+        try {
+            gatewayContext.getWebResourceManager().addServlet("doom-ws", DoomWebSocketServlet.class);
+            logger.info("DOOM: WebSocket servlet registered at /system/doom-ws/*");
+        } catch (Exception e) {
+            logger.error("DOOM: Failed to register WebSocket servlet", e);
         }
 
         logger.info("DOOM Perspective Module — startup COMPLETE");
@@ -99,7 +106,13 @@ public class GatewayHook extends AbstractGatewayModuleHook {
         try {
             gatewayContext.getWebResourceManager().removeServlet("doom");
         } catch (Exception e) {
-            logger.warn("DOOM: Error removing servlet", e);
+            logger.warn("DOOM: Error removing doom servlet", e);
+        }
+
+        try {
+            gatewayContext.getWebResourceManager().removeServlet("doom-ws");
+        } catch (Exception e) {
+            logger.warn("DOOM: Error removing WebSocket servlet", e);
         }
 
         logger.info("DOOM Perspective Module — shutdown COMPLETE");
