@@ -2,7 +2,7 @@
 
 Running DOOM natively inside Inductive Automation Ignition Perspective, with server-side rendering on the Gateway JVM and browser display via a self-contained HTTP servlet pipeline. Full audio — sound effects and music — with no external dependencies.
 
-**Current Version:** v0.9.2
+**Current Version:** v0.9.8
 
 ---
 
@@ -31,12 +31,13 @@ Running DOOM natively inside Inductive Automation Ignition Perspective, with ser
 ```
 Browser
   └─ GET /system/doom/frame/stream   ← MJPEG push stream (server pushes JPEG frames as rendered)
-  └─ POST /system/doom/input         ← keyboard state (JS keyCodes)
-  └─ GET /system/doom/sounds/events  ← positional sound events (JSON)
-  └─ GET /system/doom/music/status   ← MUS→MIDI track state
+  └─ WS  /system/doom-ws             ← primary: input + sound/music events (bidirectional)
+  └─ POST /system/doom/input         ← fallback: keyboard state (JS keyCodes)
+  └─ GET /system/doom/events/stream  ← fallback: SSE sound/music events
 
 Gateway (Ignition Module)
   └─ DoomInputServlet                ← all HTTP routing
+  └─ DoomWebSocketServlet            ← WebSocket upgrade handler
   └─ SessionManager                  ← lifecycle, WAD discovery, session cap
   └─ DoomSession                     ← per-session child ClassLoader + engine wrapper
   └─ MatchSession                    ← N independent engines + TikcmdBus
@@ -62,7 +63,7 @@ Engine (per session, child ClassLoader)
 |---|---|
 | Game engine | Mocha DOOM (pure Java port of Chocolate Doom) |
 | Rendering | Palette-indexed software renderer, 640×400, JPEG (PNG optional via `?format=png`) |
-| Transport | HTTP servlet — MJPEG push stream for frames, no WebSocket, no tags |
+| Transport | HTTP servlet — MJPEG push stream for frames; WebSocket (SSE/POST fallback) for input and events |
 | Multiplayer | P2P tikcmd-sync via TikcmdBus ring buffer |
 | Sound effects | DMX sounds from WAD, Web Audio API, 44100 Hz 16-bit |
 | Music | MUS→MIDI server-side, SoundFont playback browser-side |
@@ -218,7 +219,9 @@ All paths are relative to your Ignition gateway root (e.g. `http://localhost:808
 
 **Multiplayer (P2P tikcmd-sync)** — each player gets their own independent DOOM engine (`DoomSession`) running on its own thread. Engines share a `TikcmdBus` ring buffer (`common.jar`, parent classloader) and exchange 8-byte serialized tikcmds each game tic via `P2PNetDriver`. DOOM's deterministic simulation keeps all engines in lockstep. Each browser naturally gets the correct POV, HUD, sound, and music. Engines start in parallel background threads once all player slots are filled; browsers poll `/match/status` during the lobby.
 
-**MJPEG push streaming** — frames served via `GET /system/doom/frame/stream?session=UUID` as a `multipart/x-mixed-replace` stream. The server holds the response open and pushes each encoded JPEG as it's rendered, decoupling frame rate from browser round-trip time. No WebSocket, no memory tags, no polling.
+**MJPEG push streaming** — frames served via `GET /system/doom/frame/stream?session=UUID` as a `multipart/x-mixed-replace` stream. The server holds the response open and pushes each encoded JPEG as it's rendered, decoupling frame rate from browser round-trip time. No memory tags, no polling.
+
+**WebSocket transport** — input keycodes and audio events (sound + music) are exchanged over a single bidirectional WebSocket (`/system/doom-ws`), eliminating SSE/POST round-trip overhead. The browser falls back to SSE + POST if the WebSocket handshake fails.
 
 **Self-hosted audio** — all assets served from the Ignition gateway. `soundfont-player.min.js` bundled in `gateway.jar`. Instrument JS files on the gateway filesystem under `user-lib/doom/soundfonts/`. Zero external network dependencies — works air-gapped.
 

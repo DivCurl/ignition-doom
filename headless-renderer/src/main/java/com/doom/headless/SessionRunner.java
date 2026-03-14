@@ -508,8 +508,17 @@ public class SessionRunner implements ISessionRunner {
                 "-config", configDir + "doom.cfg"
             ));
             if (startEp > 0) {
+                // Mocha DOOM's WarpFormat expects a single combined integer:
+                //   non-commercial (episode-based): ep*10+map  e.g. E1M5 → 15
+                //   commercial (DOOM2-style):        map        e.g. MAP12 → 12
+                String wn = wadPath != null ? wadPath.toUpperCase() : "";
+                boolean commercialWad = wn.contains("DOOM2") || wn.endsWith("TNT.WAD")
+                                        || wn.contains("PLUTONIA");
+                String warpVal = commercialWad
+                    ? String.valueOf(startMap)
+                    : String.valueOf(startEp * 10 + startMap);
                 argList.addAll(Arrays.asList(
-                    "-warp", String.valueOf(startEp), String.valueOf(startMap),
+                    "-warp", warpVal,
                     "-skill", String.valueOf(skill + 1)   // CLI is 1-based
                 ));
             }
@@ -590,7 +599,7 @@ public class SessionRunner implements ISessionRunner {
             dm.setupLoop();
             logger.info("DOOM game loop exited normally");
 
-        } catch (Exception e) {
+        } catch (Throwable e) {
             String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
             if (msg.contains("quit requested") || msg.contains("interrupted")) {
                 logger.info("DOOM game thread: clean exit ({})", msg);

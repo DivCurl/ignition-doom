@@ -20,16 +20,13 @@ package com.doom.gateway;
 /**
  * Serves a complete standalone DOOM player page.
  *
- * Phase 5.2: Session-aware. The server injects SESSION_ID and WAD_NAME into the page HTML;
+ * Session-aware: the server injects SESSION_ID and WAD_NAME into the page HTML;
  * all browser fetch calls append ?session=SESSION_ID so the servlet can route to the correct
  * DoomSession. The session ID is also stored in sessionStorage so page refreshes reuse the
  * same session (as long as the tab isn't closed and the session hasn't been reaped).
  *
- * Phase 3.1: Direct frame serving for improved performance.
- * Phase 4.2: Web Audio API sound playback.
- * Phase 4.3: SoundFont MIDI music.
- * Phase 5.1: Main menu, in-game console, URL warp params.
- * Phase 5.2: Per-session routing via ?session= query param on every fetch.
+ * Transport: WebSocket (/doom-ws) is the primary channel for input and audio events.
+ * Falls back to POST /input + SSE /events/stream if WebSocket is unavailable.
  */
 public class DoomPlayPage {
 
@@ -69,6 +66,7 @@ public class DoomPlayPage {
             + "}\n"
             + "#game-container:focus {\n"
             + "  outline: 3px solid #c0392b;\n"
+            + "  cursor: none;\n"
             + "}\n"
             + "#frame {\n"
             + "  width:100%; height:100%;\n"
@@ -257,6 +255,7 @@ public class DoomPlayPage {
             + "  _ws = new WebSocket(proto + '//' + location.host + '/system/doom-ws?session=' + SESSION_ID);\n"
             + "  _ws.onopen = function() {\n"
             + "    clearTimeout(_wsTimer); _wsOk = true;\n"
+            + "    console.log('[DOOM] WS connected — using WebSocket transport');\n"
             + "    if (_evtSource) { _evtSource.onerror = null; _evtSource.close(); _evtSource = null; }\n"
             + "  };\n"
             + "  _ws.onmessage = function(e) {\n"
@@ -281,8 +280,8 @@ public class DoomPlayPage {
             + "  _ws.onclose = function() {\n"
             + "    clearTimeout(_wsTimer); _ws = null;\n"
             + "    if (!gameEnded) {\n"
-            + "      if (_wsOk) { _wsOk = false; setTimeout(_connectWS, 1000); }\n"
-            + "      else if (!_evtSource) { _openEvents(); }\n"
+            + "      if (_wsOk) { _wsOk = false; console.log('[DOOM] WS dropped — reconnecting...'); setTimeout(_connectWS, 1000); }\n"
+            + "      else { console.warn('[DOOM] WS unavailable — falling back to SSE+POST'); if (!_evtSource) { _openEvents(); } }\n"
             + "    }\n"
             + "  };\n"
             + "  _ws.onerror = function() {};\n"
@@ -605,8 +604,8 @@ public class DoomPlayPage {
      * Returns the HTML page for a multiplayer match participant.
      * Uses /match/* endpoints instead of the single-player endpoints.
      *
-     * Phase 6.2: Full audio (sound events + SoundFont MIDI music) via match endpoints.
-     *            Lobby overlay with shareable join URL shown until all players have joined.
+     * Full audio (sound events + SoundFont MIDI music) via match endpoints.
+     * Lobby overlay with shareable join URL shown until all players have joined.
      *
      * Audio note: sound events and music state are shared across all players on the same
      * engine session. The first player to poll each interval wins the events. This is an
@@ -637,7 +636,7 @@ public class DoomPlayPage {
             + "body { background:#1a1a1a; color:#fff; font-family:monospace; font-size:14px; display:flex; flex-direction:column; }\n"
             + "#controls { flex-shrink:0; text-align:center; padding:8px 15px; background:#222; }\n"
             + "#game-container { flex:1; min-height:0; background:#000; position:relative; outline:none; }\n"
-            + "#game-container:focus { outline: 3px solid #c0392b; }\n"
+            + "#game-container:focus { outline: 3px solid #c0392b; cursor: none; }\n"
             + "#frame { width:100%; height:100%; object-fit:contain; object-position:center; image-rendering:pixelated; image-rendering:-moz-crisp-edges; image-rendering:crisp-edges; }\n"
             + "#status { flex-shrink:0; padding:4px; font-size:12px; color:#888; text-align:center; background:#1a1a1a; }\n"
             + ".stat { display:inline-block; margin:0 10px; }\n"
@@ -854,6 +853,7 @@ public class DoomPlayPage {
             + "  _ws = new WebSocket(proto + '//' + location.host + '/system/doom-ws' + _matchParams);\n"
             + "  _ws.onopen = function() {\n"
             + "    clearTimeout(_wsTimer); _wsOk = true;\n"
+            + "    console.log('[DOOM] WS connected — using WebSocket transport');\n"
             + "    if (_evtSource) { _evtSource.onerror = null; _evtSource.close(); _evtSource = null; }\n"
             + "  };\n"
             + "  _ws.onmessage = function(e) {\n"
@@ -878,8 +878,8 @@ public class DoomPlayPage {
             + "  _ws.onclose = function() {\n"
             + "    clearTimeout(_wsTimer); _ws = null;\n"
             + "    if (!gameEnded) {\n"
-            + "      if (_wsOk) { _wsOk = false; setTimeout(_connectWS, 1000); }\n"
-            + "      else if (!_evtSource) { _openEvents(); }\n"
+            + "      if (_wsOk) { _wsOk = false; console.log('[DOOM] WS dropped — reconnecting...'); setTimeout(_connectWS, 1000); }\n"
+            + "      else { console.warn('[DOOM] WS unavailable — falling back to SSE+POST'); if (!_evtSource) { _openEvents(); } }\n"
             + "    }\n"
             + "  };\n"
             + "  _ws.onerror = function() {};\n"

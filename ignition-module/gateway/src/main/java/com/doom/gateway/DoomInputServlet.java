@@ -189,10 +189,8 @@ public class DoomInputServlet extends HttpServlet {
             DoomSession session = resolveRunningSession(req, resp);
             if (session == null) return;
             serveConsoleCommand(session, req, resp);
-        } else if (path.contains("input/stream")) {
-            handleStreamingInput(req, resp);
         } else {
-            // Default: keyboard input. Sound events are delivered via SSE (/events/stream).
+            // Default: keyboard input. Sound events are delivered via WebSocket (/doom-ws), with SSE fallback.
             // POST /system/doom/input?session=UUID  →  200 OK (no body)
             String body = new String(req.getInputStream().readAllBytes()).trim();
             Set<Integer> currentKeys = new HashSet<>();
@@ -1100,10 +1098,8 @@ public class DoomInputServlet extends HttpServlet {
             MatchSession match = resolveRunningMatch(req, resp);
             if (match == null) return;
             serveMatchConsoleCommand(match, req, resp);
-        } else if (path.contains("input/stream")) {
-            handleMatchStreamingInput(req, resp);
         } else {
-            // Default: keyboard input. Sound events are delivered via SSE (/match/events/stream).
+            // Default: keyboard input. Sound events are delivered via WebSocket (/doom-ws), with SSE fallback.
             // POST /match/input?match=ID&session=UUID  →  200 OK (no body)
             String body = new String(req.getInputStream().readAllBytes()).trim();
             Set<Integer> currentKeys = new HashSet<>();
@@ -1503,71 +1499,6 @@ public class DoomInputServlet extends HttpServlet {
             + "+(auth?'&auth='+encodeURIComponent(auth):'')"
             + ");\n"
             + "</script></body></html>";
-    }
-
-    // ── Streaming input handlers (Option C) ──────────────────────────────────
-
-    /**
-     * POST /system/doom/input/stream?session=UUID
-     * Accepts a persistent chunked-encoded request body. Each newline-delimited
-     * line is a comma-separated list of pressed keyCodes; the server updates the
-     * session's key state on every line. Runs until the client disconnects or the
-     * session ends. Requires browser support for fetch() with duplex:'half'.
-     */
-    private void handleStreamingInput(HttpServletRequest req, HttpServletResponse resp)
-            throws IOException {
-        DoomSession session = resolveSession(req);
-        if (session == null) { resp.setStatus(404); return; }
-        resp.setStatus(200);
-        resp.setContentType("text/plain");
-        resp.flushBuffer();
-        try (java.io.BufferedReader reader = new java.io.BufferedReader(
-                new java.io.InputStreamReader(req.getInputStream(), StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (!session.isRunning()) break;
-                Set<Integer> keys = new HashSet<>();
-                if (!line.trim().isEmpty()) {
-                    for (String s : line.split(",")) {
-                        try { keys.add(Integer.parseInt(s.trim())); }
-                        catch (NumberFormatException ignored) {}
-                    }
-                }
-                session.updatePressedKeys(keys);
-            }
-        } catch (IOException ignored) { /* client disconnected */ }
-    }
-
-    /**
-     * POST /system/doom/match/input/stream?match=ID&session=UUID
-     * Same as handleStreamingInput but for a deathmatch slot session.
-     */
-    private void handleMatchStreamingInput(HttpServletRequest req, HttpServletResponse resp)
-            throws IOException {
-        String matchId = req.getParameter("match");
-        String sid     = req.getParameter("session");
-        SessionManager sm = GatewayHook.getSessionManager();
-        if (sm == null || matchId == null || sid == null) { resp.setStatus(400); return; }
-        MatchSession match = sm.getMatch(matchId);
-        if (match == null) { resp.setStatus(404); return; }
-        resp.setStatus(200);
-        resp.setContentType("text/plain");
-        resp.flushBuffer();
-        try (java.io.BufferedReader reader = new java.io.BufferedReader(
-                new java.io.InputStreamReader(req.getInputStream(), StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (!match.isRunning()) break;
-                Set<Integer> keys = new HashSet<>();
-                if (!line.trim().isEmpty()) {
-                    for (String s : line.split(",")) {
-                        try { keys.add(Integer.parseInt(s.trim())); }
-                        catch (NumberFormatException ignored) {}
-                    }
-                }
-                match.updatePressedKeys(sid, keys);
-            }
-        } catch (IOException ignored) { /* client disconnected */ }
     }
 
     // ── Session resolution helpers ────────────────────────────────────────────
