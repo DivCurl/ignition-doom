@@ -32,14 +32,17 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequestWrapper;
+import jakarta.servlet.http.HttpServletResponse;
+
+import java.io.IOException;
+import java.time.Duration;
 import java.util.HashSet;
 import java.util.Set;
 
 /**
  * WebSocket endpoint for DOOM input + audio events.
- *
- * Replaces the SSE /events/stream + POST /input + duplex streaming input with a
- * single bidirectional WebSocket channel per browser session.
  *
  * Single-player:  ws://.../system/doom-ws?session=UUID
  * Deathmatch:     ws://.../system/doom-ws?match=MATCH_ID&session=SESSION_ID
@@ -51,6 +54,15 @@ import java.util.Set;
  *   Server→Client  "pong:1234"      — RTT echo
  *   Server→Client  "sound:[{...}]"  — sound events JSON array
  *   Server→Client  "music:{...}"    — music state change JSON
+ *
+ * Registration note:
+ *   Ignition's addServlet() wraps requests in HttpServletRequestWrapper. Jetty 12's
+ *   JettyWebSocketServerContainer.upgrade() needs the raw ServletApiRequest to access
+ *   the underlying HTTP channel. We override service() to unwrap before delegating.
+ *
+ *   We also explicitly call JettyWebSocketServletContainerInitializer.configure() in
+ *   init() to ensure the WebSocket container is installed in Ignition's context before
+ *   super.init() runs, providing a second chance if ensureContainer() alone isn't enough.
  */
 public class DoomWebSocketServlet extends JettyWebSocketServlet {
 
@@ -58,16 +70,34 @@ public class DoomWebSocketServlet extends JettyWebSocketServlet {
 
     @Override
     public void init() throws ServletException {
-        logger.info("DOOM WS: init() context={}", getServletContext().getContextPath());
         super.init();
         logger.info("DOOM WS: init() complete — servlet ready");
     }
 
+    /**
+     * Unwrap Ignition's HttpServletRequestWrapper before delegating to Jetty's WebSocket
+     * upgrade logic. JettyWebSocketServerContainer.upgrade() calls
+     * ServletContextRequest.getServletContextRequest(req), which needs to reach the raw
+     * ServletApiRequest to locate the underlying HTTP channel. If the wrapper is opaque to
+     * Jetty's unwrapping logic, the upgrade silently falls through to normal HTTP handling.
+     */
+    @Override
+    protected void service(HttpServletRequest req, HttpServletResponse resp)
+            throws IOException, ServletException {
+        // Unwrap Ignition's HttpServletRequestWrapper so Jetty's WebSocket upgrade
+        // logic can reach the underlying ServletApiRequest and its HTTP channel.
+        HttpServletRequest unwrapped = req;
+        while (unwrapped instanceof HttpServletRequestWrapper) {
+            unwrapped = (HttpServletRequest) ((HttpServletRequestWrapper) unwrapped).getRequest();
+        }
+        super.service(unwrapped, resp);
+    }
+
     @Override
     protected void configure(JettyWebSocketServletFactory factory) {
-        factory.setIdleTimeout(java.time.Duration.ofSeconds(120));
+        logger.info("DOOM WS: configure() — WebSocket factory ready");
+        factory.setIdleTimeout(Duration.ofSeconds(120));
         factory.setCreator((req, resp) -> {
-            // req is JettyServerUpgradeRequest — query params available via getParameter()
             String sessionId = req.getHttpServletRequest().getParameter("session");
             String matchId   = req.getHttpServletRequest().getParameter("match");
             return new DoomWebSocketHandler(sessionId, matchId);
@@ -87,7 +117,6 @@ public class DoomWebSocketServlet extends JettyWebSocketServlet {
         private volatile Session wsSession;
         private volatile boolean closed = false;
 
-        /** Push thread: polls for sound/music events and sends them over WS. */
         private Thread pushThread;
 
         DoomWebSocketHandler(String sessionId, String matchId) {
@@ -114,9 +143,6 @@ public class DoomWebSocketServlet extends JettyWebSocketServlet {
                 return;
             }
 
-            // Key state: comma-separated integers; empty string = all keys released.
-            // IMPORTANT: always call updatePressedKeys even for empty message so keys
-            // are cleared when the player releases all keys.
             Set<Integer> keys = new HashSet<>();
             for (String part : message.split(",")) {
                 String p = part.trim();
@@ -127,19 +153,14 @@ public class DoomWebSocketServlet extends JettyWebSocketServlet {
             }
 
             DoomSession session = resolveSession();
-            if (session != null) {
-                session.updatePressedKeys(keys);
-            }
+            if (session != null) session.updatePressedKeys(keys);
         }
 
         @OnWebSocketClose
         public void onClose(int statusCode, String reason) {
             closed = true;
-            // Clear all keys on disconnect to prevent sticky keys
             DoomSession session = resolveSession();
-            if (session != null) {
-                session.updatePressedKeys(new HashSet<>());
-            }
+            if (session != null) session.updatePressedKeys(new HashSet<>());
             if (pushThread != null) pushThread.interrupt();
             log.debug("WS close: session={} status={}", sessionId, statusCode);
         }
@@ -151,7 +172,7 @@ public class DoomWebSocketServlet extends JettyWebSocketServlet {
             log.debug("WS error: session={} cause={}", sessionId, cause.getMessage());
         }
 
-        // ── Event push loop ───────────────────────────────────────────────────
+        // ── Push loop ─────────────────────────────────────────────────────────
 
         private void pushLoop() {
             MusicStateDTO lastSentMusic = null;
@@ -164,13 +185,9 @@ public class DoomWebSocketServlet extends JettyWebSocketServlet {
                         continue;
                     }
 
-                    // Sound events
                     SoundEventDTO[] events = session.pollSoundEvents();
-                    if (events.length > 0) {
-                        sendText("sound:" + buildSoundEventsJson(events));
-                    }
+                    if (events.length > 0) sendText("sound:" + buildSoundEventsJson(events));
 
-                    // Music state
                     MusicStateDTO music = session.peekMusicState();
                     if (music != null && music != lastSentMusic) {
                         lastSentMusic = music;
@@ -194,24 +211,18 @@ public class DoomWebSocketServlet extends JettyWebSocketServlet {
         private DoomSession resolveSession() {
             SessionManager sm = GatewayHook.getSessionManager();
             if (sm == null || sessionId == null) return null;
-
             if (matchId != null) {
                 MatchSession match = sm.getMatch(matchId);
-                if (match == null) return null;
-                return match.getSlotSession(sessionId);
+                return match != null ? match.getSlotSession(sessionId) : null;
             }
-
             return sm.getSession(sessionId);
         }
 
         private void sendText(String msg) {
             Session s = wsSession;
             if (s != null && s.isOpen() && !closed) {
-                try {
-                    s.sendText(msg, Callback.NOOP);
-                } catch (Exception e) {
-                    log.debug("WS send failed: {}", e.getMessage());
-                }
+                try { s.sendText(msg, Callback.NOOP); }
+                catch (Exception e) { log.debug("WS send failed: {}", e.getMessage()); }
             }
         }
 
