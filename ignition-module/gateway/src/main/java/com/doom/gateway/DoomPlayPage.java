@@ -219,6 +219,7 @@ public class DoomPlayPage {
             + "  if (pressed[e.keyCode]) { delete pressed[e.keyCode]; sendState(); }\n"
             + "});\n"
             + "\n"
+            + "container.addEventListener('blur', function() { pressed = {}; sendState(); });\n"
             + "window.addEventListener('blur', function() { pressed = {}; sendState(); });\n"
             + "\n"
             // ── SSE: sound + music + latency events ─────────────────────────────
@@ -817,6 +818,7 @@ public class DoomPlayPage {
             + "  e.preventDefault(); e.stopPropagation();\n"
             + "  if (pressed[e.keyCode]) { delete pressed[e.keyCode]; sendState(); }\n"
             + "});\n"
+            + "container.addEventListener('blur', function() { pressed={}; sendState(); });\n"
             + "window.addEventListener('blur', function() { pressed={}; sendState(); });\n"
             + "\n"
             // ── SSE: sound + music + latency events (match) ──────────────────────

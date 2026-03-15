@@ -33,13 +33,14 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Manages the lifecycle of all DOOM game sessions.
  *
  * Responsibilities:
  * - Create / retrieve sessions (lazy, triggered by browser request)
- * - Enforce the per-server session cap (MAX_SESSIONS)
+ * - Enforce the per-server session cap (getMaxSessions())
  * - WAD discovery and path resolution
  * - Per-WAD sound cache (initialized once per unique WAD path)
  * - Background reaper for idle session cleanup
@@ -54,7 +55,17 @@ public class SessionManager {
 
     private static final Logger logger = LoggerFactory.getLogger("DOOM.SessionManager");
 
-    public static final int    MAX_SESSIONS    = 4;
+    private static final AtomicInteger maxSessionsRef =
+            new AtomicInteger(Integer.getInteger("doom.maxSessions", 8));
+
+    public static int getMaxSessions() { return maxSessionsRef.get(); }
+
+    public static void setMaxSessions(int n) {
+        if (n < 1) n = 1;
+        if (n > 64) n = 64;
+        int old = maxSessionsRef.getAndSet(n);
+        logger.info("Max sessions changed: {} → {}", old, n);
+    }
     public static final long   IDLE_TIMEOUT_MS = 10L * 60 * 1000;  // 10 minutes
     public static final String BASE_DIR        = "/usr/local/bin/ignition/user-lib/doom/";
     public static final String WAD_DIR         = BASE_DIR + "iwads/";
@@ -96,7 +107,7 @@ public class SessionManager {
 
         logger.info("SessionManager init — headless-renderer.jar: {}", headlessRendererJar);
         logger.info("SessionManager init — WAD directory:          {}", WAD_DIR);
-        logger.info("SessionManager init — max sessions:           {}", MAX_SESSIONS);
+        logger.info("SessionManager init — max sessions:           {}", getMaxSessions());
         logger.info("SessionManager init — idle timeout:           {} ms", IDLE_TIMEOUT_MS);
         logger.info("DOOM Admin token:    {}  (use at /system/doom/admin?token=...)", adminToken);
         logger.info("DOOM Play password:  {}  (required to start/join games at /system/doom)", playPassword);
@@ -144,8 +155,8 @@ public class SessionManager {
 
         // Session cap check (single-player sessions + multiplayer matches share the limit)
         long active = countActiveEngines();
-        if (active >= MAX_SESSIONS) {
-            logger.warn("Session cap reached ({}/{}), rejecting session {}", active, MAX_SESSIONS, sessionId);
+        if (active >= getMaxSessions()) {
+            logger.warn("Session cap reached ({}/{}), rejecting session {}", active, getMaxSessions(), sessionId);
             return null;
         }
 
@@ -222,9 +233,9 @@ public class SessionManager {
         // Session cap: reserve numPlayers slots so single-player sessions aren't displaced
         // once engines start. P2P engines start deferred (after all players join).
         long activeCount = countActiveEngines();
-        if (activeCount + numPlayers > MAX_SESSIONS) {
+        if (activeCount + numPlayers > getMaxSessions()) {
             logger.warn("Session cap reached ({}/{}, need {}), rejecting match {}",
-                activeCount, MAX_SESSIONS, numPlayers, matchId);
+                activeCount, getMaxSessions(), numPlayers, matchId);
             return null;
         }
 
@@ -401,7 +412,7 @@ public class SessionManager {
         json.append("\"status\":\"ok\",");
         json.append("\"uptimeSeconds\":").append(uptimeSec).append(",");
         json.append("\"activeSessions\":").append(active.size()).append(",");
-        json.append("\"maxSessions\":").append(MAX_SESSIONS).append(",");
+        json.append("\"maxSessions\":").append(getMaxSessions()).append(",");
         json.append("\"headlessRendererJar\":\"").append(esc(headlessRendererJar.toString())).append("\",");
         json.append("\"wadDirectory\":\"").append(esc(WAD_DIR)).append("\",");
         json.append("\"availableWads\":[");

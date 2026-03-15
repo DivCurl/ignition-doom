@@ -34,7 +34,7 @@ public interface Points<V, E extends Enum<E>> extends Screens<V, E> {
                 );
             }
         } else {
-            throw new IllegalArgumentException(String.format("Invalid coordinates: (%d, %d)", x, y));
+            throw new BadRangeException(String.format("Invalid coordinates: (%d, %d)", x, y));
         }
     }
 

@@ -10,7 +10,7 @@ package com.doom.gateway;
  */
 public class DoomLandingPage {
 
-    public static String getHTML(String version, java.util.List<String> brandingFiles) {
+    public static String getHTML(java.util.List<String> brandingFiles) {
         // Build branding <img> tags from the server-side file list
         StringBuilder brandImgHtml = new StringBuilder();
         for (String bf : brandingFiles) {
@@ -159,7 +159,7 @@ public class DoomLandingPage {
             // ── Stats bar
             + "<div class='stats-bar'>\n"
             + "  <span class='stat-engines' id='engineStat'>"
-            + "Engines: <span class='used' id='usedEngines'>—</span><span style='color:#666'> / 4</span></span>\n"
+            + "Engines: <span class='used' id='usedEngines'>—</span><span style='color:#666'> / <span id='maxEngines'>—</span></span></span>\n"
             + "  <span class='sep'>|</span>\n"
             + "  <span id='uptimeStat'>Uptime: —</span>\n"
             + "  <span class='stat-links'>\n"
@@ -167,10 +167,8 @@ public class DoomLandingPage {
             + "  </span>\n"
             + "</div>\n"
 
-            // ── Cap warning
-            + "<div class='cap-warning hidden' id='capWarning'>\n"
-            + "  &#x26A0; All engine slots are in use (4 / 4). Stop an existing session before starting a new one.\n"
-            + "</div>\n"
+            // ── Cap warning (text populated dynamically by updateStats)
+            + "<div class='cap-warning hidden' id='capWarning'></div>\n"
 
             // ── Action cards
             + "<div class='cards'>\n"
@@ -241,7 +239,7 @@ public class DoomLandingPage {
 
             // ── Footer
             + "<div class='footer'>"
-            + "<span class='footer-note'>IGNITION DOOM &nbsp;&middot;&nbsp; v" + version + " &nbsp;&middot;&nbsp; GNU GPL v3</span>"
+            + "<span class='footer-note'>IGNITION DOOM &nbsp;&middot;&nbsp; GNU GPL v3</span>"
             + "</div>\n"
 
             // ── Script
@@ -488,11 +486,12 @@ public class DoomLandingPage {
             + "function updateStats(h) {\n"
             + "  var used=h.activeSessions, cap=h.maxSessions, full=used>=cap;\n"
             + "  document.getElementById('usedEngines').textContent=used;\n"
+            + "  document.getElementById('maxEngines').textContent=cap;\n"
             + "  document.getElementById('engineStat').className='stat-engines'+(full?' full':'');\n"
             + "  document.getElementById('uptimeStat').textContent='Uptime: '+fmtUptime(h.uptimeSeconds);\n"
-            + "  document.getElementById('capWarning').className='cap-warning'+(full?'':' hidden');\n"
-            + "  document.getElementById('spCard').className='card'+(full?' disabled':'');\n"
-            + "  document.getElementById('dmCard').className='card'+(full?' disabled':'');\n"
+            + "  var warn=document.getElementById('capWarning');\n"
+            + "  if(full){warn.textContent='\u26A0 All engine slots are in use ('+used+' / '+cap+'). Stop an existing session before starting a new one.';warn.className='cap-warning';}\n"
+            + "  else{warn.className='cap-warning hidden';}\n"
             + "}\n"
 
             + "function apply(h) {\n"

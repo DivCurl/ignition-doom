@@ -86,6 +86,9 @@ public class DoomInputServlet extends HttpServlet {
         } else if (path.contains("admin/kill")) {
             serveAdminKill(req, resp);
 
+        } else if (path.contains("admin/config")) {
+            serveAdminConfig(req, resp);
+
         } else if (path.contains("admin")) {
             serveAdminPage(req, resp);
 
@@ -183,6 +186,8 @@ public class DoomInputServlet extends HttpServlet {
             handleMatchPost(path, req, resp);
         } else if (path.contains("admin/regen")) {
             serveAdminRegen(req, resp);
+        } else if (path.contains("admin/config")) {
+            serveAdminConfig(req, resp);
         } else if (path.contains("auth")) {
             handlePlayAuth(req, resp);
         } else if (path.contains("console")) {
@@ -345,11 +350,35 @@ public class DoomInputServlet extends HttpServlet {
             resp.getWriter().write(buildAdminForbiddenPage());
             return;
         }
-        String killedId = req.getParameter("killed");
-        String regenDone = req.getParameter("regen");
+        String killedId    = req.getParameter("killed");
+        String regenDone   = req.getParameter("regen");
+        String configSaved = req.getParameter("configSaved");
         resp.setContentType("text/html; charset=UTF-8");
         resp.setHeader("Cache-Control", "no-cache, no-store");
-        resp.getWriter().write(buildAdminPage(sm, token, killedId, regenDone != null));
+        resp.getWriter().write(buildAdminPage(sm, token, killedId, regenDone != null, configSaved != null));
+    }
+
+    private void serveAdminConfig(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        SessionManager sm = GatewayHook.getSessionManager();
+        if (sm == null) { resp.setStatus(503); return; }
+        String token = req.getParameter("token");
+        if (!sm.validateAdminToken(token)) {
+            resp.setStatus(403);
+            resp.setContentType("text/html; charset=UTF-8");
+            resp.getWriter().write(buildAdminForbiddenPage());
+            return;
+        }
+        String maxStr = req.getParameter("maxSessions");
+        if (maxStr != null) {
+            try {
+                SessionManager.setMaxSessions(Integer.parseInt(maxStr.trim()));
+            } catch (NumberFormatException e) {
+                resp.setStatus(400);
+                resp.getWriter().write("Invalid maxSessions value");
+                return;
+            }
+        }
+        resp.sendRedirect("/system/doom/admin?token=" + token + "&configSaved=1");
     }
 
     private void serveAdminRegen(HttpServletRequest req, HttpServletResponse resp) throws IOException {
@@ -392,7 +421,7 @@ public class DoomInputServlet extends HttpServlet {
         resp.sendRedirect("/system/doom/admin?token=" + token + "&killed=" + escUrl(sessionId));
     }
 
-    private String buildAdminPage(SessionManager sm, String token, String killedId, boolean regenDone) {
+    private String buildAdminPage(SessionManager sm, String token, String killedId, boolean regenDone, boolean configSaved) {
         long uptimeSec = sm.getUptimeSec();
         long uptimeMin = uptimeSec / 60;
         long uptimeHr  = uptimeMin / 60;
@@ -442,6 +471,9 @@ public class DoomInputServlet extends HttpServlet {
         if (regenDone) {
             h.append("<div class='notice'>Play password regenerated. All existing browser tokens have been revoked.</div><br>\n");
         }
+        if (configSaved) {
+            h.append("<div class='notice'>Configuration saved.</div><br>\n");
+        }
         h.append("<div class='stats' style='margin-bottom:8px;display:flex;align-items:center;gap:0'>")
          .append("<span style='color:#888'>Play password:</span>&nbsp;")
          .append("<code style='color:#ffcc00;letter-spacing:2px'>").append(escHtml(sm.getPlayPassword())).append("</code>")
@@ -451,7 +483,7 @@ public class DoomInputServlet extends HttpServlet {
          .append("</div>\n");
 
         // Stats bar
-        h.append("<div class='stats'>Active: ").append(active.size()).append(" / ").append(SessionManager.MAX_SESSIONS);
+        h.append("<div class='stats'>Active: ").append(active.size()).append(" / ").append(SessionManager.getMaxSessions());
         h.append("&nbsp;&nbsp;|&nbsp;&nbsp;Uptime: ");
         if (uptimeHr > 0) h.append(uptimeHr).append("h ");
         h.append(uptimeMin % 60).append("m ").append(uptimeSec % 60).append("s");
@@ -462,6 +494,18 @@ public class DoomInputServlet extends HttpServlet {
         if (killedId != null && !killedId.isBlank()) {
             h.append("<div class='notice'>Session terminated: ").append(escHtml(killedId)).append("</div><br>\n");
         }
+
+        // Max sessions config form
+        h.append("<div class='stats' style='margin-bottom:16px;display:flex;align-items:center;gap:0'>")
+         .append("<span style='color:#888'>Max sessions:</span>&nbsp;")
+         .append("<form method='GET' action='/system/doom/admin/config' style='display:inline;margin:0'>")
+         .append("<input type='hidden' name='token' value='").append(escHtml(token)).append("'>")
+         .append("<input type='number' name='maxSessions' value='").append(SessionManager.getMaxSessions()).append("'")
+         .append(" min='1' max='64' style='width:60px;background:#1a1a1a;color:#ffcc00;border:1px solid #555;")
+         .append("font-family:monospace;font-size:13px;padding:3px 6px;text-align:center'>")
+         .append("<button type='submit' class='regen-btn'>Apply</button>")
+         .append("</form>")
+         .append("</div>\n");
 
         h.append("<table>\n");
         h.append("<tr><th>Session ID</th><th>WAD</th><th>Idle</th><th>Uptime</th><th>Action</th></tr>\n");
@@ -848,7 +892,7 @@ public class DoomInputServlet extends HttpServlet {
         }
         resp.setContentType("text/html; charset=UTF-8");
         resp.setHeader("Cache-Control", "no-store, no-cache");
-        resp.getWriter().write(DoomLandingPage.getHTML("0.9.0", brandingFiles));
+        resp.getWriter().write(DoomLandingPage.getHTML(brandingFiles));
     }
 
     private void serveBrandingFile(String fileName, HttpServletResponse resp) throws IOException {
@@ -1583,7 +1627,7 @@ public class DoomInputServlet extends HttpServlet {
             + "<title>DOOM — Server at capacity</title></head>"
             + "<body style='background:#1a1a1a;color:#f00;font-family:monospace;padding:20px'>"
             + "<h2>DOOM: Server at capacity</h2>"
-            + "<p>Maximum " + SessionManager.MAX_SESSIONS + " concurrent sessions active.</p>"
+            + "<p>Maximum " + SessionManager.getMaxSessions() + " concurrent sessions active.</p>"
             + "<p>Try again later or close another tab.</p>"
             + "<p><a href='javascript:location.reload()' style='color:#f00'>Retry</a></p>"
             + "</body></html>";
