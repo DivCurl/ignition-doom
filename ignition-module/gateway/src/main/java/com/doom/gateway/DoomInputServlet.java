@@ -710,6 +710,9 @@ public class DoomInputServlet extends HttpServlet {
             try { Thread.sleep(10); }
             catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
         }
+        // Notify the client that the session has ended so it can show the overlay,
+        // regardless of whether the MJPEG stream fires an error event.
+        try { out.print("event: ended\ndata:\n\n"); out.flush(); } catch (Exception ignored) {}
     }
 
     /**
@@ -771,6 +774,7 @@ public class DoomInputServlet extends HttpServlet {
             try { Thread.sleep(10); }
             catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
         }
+        try { out.print("event: ended\ndata:\n\n"); out.flush(); } catch (Exception ignored) {}
     }
 
     // ── /music/status ─────────────────────────────────────────────────────────
@@ -1381,11 +1385,31 @@ public class DoomInputServlet extends HttpServlet {
         resp.setHeader("Connection", "close");
         OutputStream out = resp.getOutputStream();
         int seq = session.getFrameSeq();
+        double lagEma = 0.0;
+        // Seed cooldown so quality is never adjusted until 5s after stream opens.
+        // This also avoids the inflated lag on the very first frame (engine frames
+        // produced during JVM/sound-cache warmup inflate newSeq - seq - 1 to ~35–70).
+        long lastQualityChangeMs = System.currentTimeMillis();
+        boolean firstFrame = true;
         while (session.isRunning()) {
             try {
                 byte[] frame = session.waitForNextFrame(seq, 2000);
                 if (frame == null) continue;
-                seq = session.getFrameSeq();
+                int newSeq = session.getFrameSeq();
+                if (firstFrame) {
+                    // Skip the first-frame lag sample — seq gap reflects connection setup,
+                    // not real congestion.
+                    firstFrame = false;
+                } else {
+                    lagEma = 0.8 * lagEma + 0.2 * (newSeq - seq - 1);
+                }
+                seq = newSeq;
+                long now = System.currentTimeMillis();
+                if (now - lastQualityChangeMs >= 5000) {
+                    float before = session.getCurrentJpegQuality();
+                    adaptJpegQuality(session, lagEma);
+                    if (session.getCurrentJpegQuality() != before) lastQualityChangeMs = now;
+                }
                 writeFramePart(out, frame, session.getFrameContentType());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -1393,6 +1417,20 @@ public class DoomInputServlet extends HttpServlet {
             } catch (IOException e) {
                 break; // client disconnected
             }
+        }
+    }
+
+    /**
+     * Adjusts JPEG quality based on a frame-lag EMA.
+     * Quality steps: 0.85 → 0.75 → 0.65 → 0.55 (floor) on congestion, recovering in reverse.
+     * Call-site enforces a 5s cool-down between adjustments to prevent oscillation.
+     */
+    private static void adaptJpegQuality(DoomSession session, double lagEma) {
+        float current = session.getCurrentJpegQuality();
+        if (lagEma > 2.5 && current > 0.55f) {
+            session.setJpegQuality(Math.max(0.55f, current - 0.10f));
+        } else if (lagEma < 0.5 && current < 0.85f) {
+            session.setJpegQuality(Math.min(0.85f, current + 0.10f));
         }
     }
 
@@ -1414,11 +1452,34 @@ public class DoomInputServlet extends HttpServlet {
         resp.setHeader("Connection", "close");
         OutputStream out = resp.getOutputStream();
         int seq = match.getPlayerFrameSeq(slot);
+        double lagEma = 0.0;
+        // Seed cooldown so quality is never adjusted until 5s after stream opens.
+        // This also avoids the inflated lag on the very first frame (engine frames
+        // produced during match startup inflate newSeq - seq - 1 artificially).
+        long lastQualityChangeMs = System.currentTimeMillis();
+        boolean firstFrame = true;
+        DoomSession slotSession = match.getSlotSessionByIndex(slot);
         while (match.isFullyRunning()) {
             try {
                 byte[] frame = match.waitForNextFrame(slot, seq, 2000);
                 if (frame == null) continue;
-                seq = match.getPlayerFrameSeq(slot);
+                int newSeq = match.getPlayerFrameSeq(slot);
+                if (firstFrame) {
+                    // Skip the first-frame lag sample — seq gap reflects match startup,
+                    // not real congestion.
+                    firstFrame = false;
+                } else {
+                    lagEma = 0.8 * lagEma + 0.2 * (newSeq - seq - 1);
+                }
+                seq = newSeq;
+                if (slotSession != null) {
+                    long now = System.currentTimeMillis();
+                    if (now - lastQualityChangeMs >= 5000) {
+                        float before = slotSession.getCurrentJpegQuality();
+                        adaptJpegQuality(slotSession, lagEma);
+                        if (slotSession.getCurrentJpegQuality() != before) lastQualityChangeMs = now;
+                    }
+                }
                 writeFramePart(out, frame, match.getPlayerFrameContentType(slot));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();

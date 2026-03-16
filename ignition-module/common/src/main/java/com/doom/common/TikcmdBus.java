@@ -92,6 +92,12 @@ public class TikcmdBus {
                 if (remaining <= 0) {
                     return null;
                 }
+                // Overflow guard: if the ring slot holds a tic far ahead of what we're waiting
+                // for, the buffer has wrapped and our tic was overwritten. Return null so the
+                // caller treats this the same as a timeout (→ playerDisconnected).
+                if (storedTic[slot][idx] != -1 && storedTic[slot][idx] > tic + (RING_SIZE >>> 1)) {
+                    return null;
+                }
                 lock.wait(remaining);
             }
             if (closed || disconnected[slot]) return new byte[TIKCMD_BYTES];

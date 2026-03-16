@@ -48,6 +48,9 @@ public interface ISessionRunner {
     /** "jpeg" (default) or "png" — set before start(). */
     default void setFrameFormat(String format) {}
 
+    /** Adjusts JPEG encoding quality (0.0–1.0). Safe to call at runtime; takes effect on next frame. */
+    default void setJpegQuality(float quality) {}
+
     /** Optional PWAD/mod file path to load via -file. Null means no PWAD. Set before start(). */
     default void setPwadPath(String path) {}
 

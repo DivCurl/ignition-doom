@@ -101,6 +101,12 @@ set INSTRUMENTS=^
   synth_bass_2 ^
   string_ensemble_1 ^
   string_ensemble_2 ^
+  violin ^
+  cello ^
+  orchestral_harp ^
+  pizzicato_strings ^
+  tremolo_strings ^
+  dulcimer ^
   synth_strings_1 ^
   synth_strings_2 ^
   choir_aahs ^

@@ -100,6 +100,7 @@ rock_organ church_organ acoustic_guitar_nylon electric_guitar_clean
 electric_guitar_muted overdriven_guitar distortion_guitar guitar_harmonics
 acoustic_bass electric_bass_finger electric_bass_pick slap_bass_1 slap_bass_2
 synth_bass_1 synth_bass_2 string_ensemble_1 string_ensemble_2
+violin cello orchestral_harp pizzicato_strings tremolo_strings dulcimer
 synth_strings_1 synth_strings_2 choir_aahs trumpet trombone tuba
 french_horn brass_section synth_brass_1 synth_brass_2 flute
 lead_1_square lead_2_sawtooth pad_2_warm pad_7_halo fx_7_echoes

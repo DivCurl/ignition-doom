@@ -123,7 +123,7 @@ public interface Patches<V, E extends Enum<E>> extends Columns<V, E> {
      *  - Good Sign 2017/04/22
      */
     default void printDebugPatchInfo(patch_t patch, int x, int y, final boolean predevide, final boolean scaleOffset, final boolean scaleStart, int dupx, int dupy) {
-        Loggers.getLogger(Patches.class.getName()).log(Level.INFO, () -> String.format(
+        Loggers.getLogger(Patches.class.getName()).log(Level.FINE, () -> String.format(
             "V_DrawPatch: bad patch (ignored)\n" +
             "Patch %s at %d, %d exceeds LFB\n" + 
             "\tpredevide: %s\n" +

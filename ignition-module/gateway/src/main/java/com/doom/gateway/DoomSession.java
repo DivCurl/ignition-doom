@@ -251,6 +251,16 @@ public class DoomSession {
         return runner.waitForNextFrame(afterSeq, timeoutMs);
     }
 
+    private volatile float currentJpegQuality = 0.85f;
+
+    public float getCurrentJpegQuality() { return currentJpegQuality; }
+
+    public void setJpegQuality(float quality) {
+        this.currentJpegQuality = quality;
+        ISessionRunner r = runner;
+        if (r != null) r.setJpegQuality(quality);
+    }
+
     public int getFrameNumber() {
         if (runner == null) return 0;
         try { return runner.getFrameNumber(); }

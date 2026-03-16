@@ -74,6 +74,11 @@ public class SessionRunner implements ISessionRunner {
         this.pwadPath = path;
     }
 
+    @Override
+    public void setJpegQuality(float quality) {
+        encoder.setJpegQuality(quality);
+    }
+
     // ── Multiplayer (P2P) ────────────────────────────────────────────────────
     private volatile int      numPlayers = 1;
     private volatile boolean  p2pMode    = false;

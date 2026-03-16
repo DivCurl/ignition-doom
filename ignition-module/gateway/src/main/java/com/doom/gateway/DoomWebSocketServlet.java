@@ -176,14 +176,23 @@ public class DoomWebSocketServlet extends JettyWebSocketServlet {
 
         private void pushLoop() {
             MusicStateDTO lastSentMusic = null;
+            float lastSentQuality = -1f;
+            boolean wasRunning = false;
 
             while (!closed && !Thread.currentThread().isInterrupted()) {
                 try {
                     DoomSession session = resolveSession();
                     if (session == null || !session.isRunning()) {
+                        if (wasRunning) {
+                            // Session was running but has now stopped — notify client immediately
+                            // so the "GAME ENDED" overlay appears regardless of MJPEG stream state.
+                            sendText("ended");
+                            break;
+                        }
                         Thread.sleep(100);
                         continue;
                     }
+                    wasRunning = true;
 
                     SoundEventDTO[] events = session.pollSoundEvents();
                     if (events.length > 0) sendText("sound:" + buildSoundEventsJson(events));
@@ -194,6 +203,12 @@ public class DoomWebSocketServlet extends JettyWebSocketServlet {
                         sendText("music:{\"playing\":" + music.playing
                             + ",\"changed\":true,\"looping\":" + music.looping
                             + ",\"volume\":" + music.volume + "}");
+                    }
+
+                    float q = session.getCurrentJpegQuality();
+                    if (q != lastSentQuality) {
+                        lastSentQuality = q;
+                        sendText("quality:" + Math.round(q * 100));
                     }
 
                     Thread.sleep(10);
