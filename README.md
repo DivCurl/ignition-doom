@@ -2,6 +2,8 @@
 
 Running DOOM natively inside Inductive Automation Ignition Perspective, with server-side rendering on the Gateway JVM and browser display via a self-contained HTTP servlet pipeline. Full audio — sound effects and music — with no external dependencies.
 
+This project sprouted suddenly and quite humbly into life while pondering over general low-level rendering capabilities in Ignition Perspective, and quickly became an obsession-driven side project while trying (and failing) to decompress from the daily grind — as more dirt was shoveled away to expose something... delightfully hellish. As a 90s kid, the original Doom holds a very special place in my heart for exposing my fragile but curious brain to the magic of computers. Later, I came to admire the craftsmanship, creativity, and raw engineering talent of the id Software team of that era with equal amounts of awe and respect. I therefore must dedicate each hour spent on this to the original id Software team, without whom none of this would be possible.
+
 **Current Version:** v0.9.8
 
 ---
