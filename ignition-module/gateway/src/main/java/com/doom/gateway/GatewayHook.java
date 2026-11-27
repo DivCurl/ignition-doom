@@ -40,7 +40,7 @@ public class GatewayHook extends AbstractGatewayModuleHook {
 
     private static final Logger logger = LoggerFactory.getLogger("DOOM.GatewayHook");
 
-    private static final String MODULE_VERSION = "1.0.0";
+    private static final String MODULE_VERSION = "1.1.0";
     private static final String MODULE_ID = "com.doom.perspective";
 
     private GatewayContext gatewayContext;
@@ -79,7 +79,7 @@ public class GatewayHook extends AbstractGatewayModuleHook {
     }
 
     /**
-     * This module's installed version without the build timestamp, e.g. "1.0.0", from the
+     * This module's installed version without the build timestamp, e.g. "1.1.0", from the
      * gateway's module list; falls back to the version compiled in.
      */
     public static String getModuleVersion() {
