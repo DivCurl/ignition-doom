@@ -23,7 +23,9 @@ This project sprouted suddenly and quite humbly into life while pondering over g
 - **Mouselook.** WASD plus mouse aim with GZDoom-style freelook (y-shearing, Heretic / Crispy Doom
   look range), on by default. Mouselook, autoaim, a crosshair, sensitivity and invert Y are set on
   the start page; in a deathmatch, mouselook and autoaim are match rules chosen by the host. The
-  mouse wheel changes weapons. A Controls page (`/system/doom/controls`) lists every key.
+  mouse wheel changes weapons. A Controls page (`/system/doom/controls`) lists every key, and a
+  Fullscreen button keeps browser shortcuts such as Ctrl+W in the game (Chrome and Edge, over
+  HTTPS or localhost).
 - **Deathmatch** with 2–4 players per match. Each player runs their own engine, kept in lockstep peer
   to peer, and other players join with the match ID.
 - **PWADs and mods.** Vanilla-compatible PWADs work, with automatic IWAD detection, warp to the first
@@ -86,6 +88,17 @@ hand on each version.
 | 8.1, 7.x | Not supported | 8.3 moved to Jetty 12 and Jakarta servlets. 8.1 uses Jetty 9.4 and `javax` servlets; 7.x runs on Java 8 |
 
 The smoke test can be repeated for any version; see [Testing Ignition versions](docs/building.md#testing-ignition-versions).
+
+### Browsers
+
+| Browser | Status | Notes |
+|---|---|---|
+| Chrome | Tested | Windows. Fullscreen keeps Ctrl+W and Esc in the game over HTTPS or localhost |
+| Edge | Tested | Windows. Same as Chrome |
+| Firefox, Safari | Untested | Expected to work; Fullscreen there is plain full screen without the keyboard capture |
+
+In full screen, hold Esc to leave it. When the game ends, the page leaves full screen and releases
+the mouse and keyboard by itself.
 
 ### WADs and mods
 

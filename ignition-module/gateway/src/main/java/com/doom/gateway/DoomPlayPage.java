@@ -43,7 +43,11 @@ public class DoomPlayPage {
     private static final String CONTROLS_HELP_LINK =
         "<a href='/system/doom/controls' target='_blank' rel='noopener'>[Controls Help]</a>";
 
-    private static final String SEP = "<span class='hdr-sep'>|</span>";
+    /** Full screen toggle; wired up in static/mouse.js (also takes the keyboard lock where allowed). */
+    private static final String FULLSCREEN_LINK =
+        "<a href='#' id='fsLink' style='margin-left:18px'>[Fullscreen]</a>";
+
+    private static final String SEP ="<span class='hdr-sep'>|</span>";
 
     public static String getHTML(String sessionId, String wadName) {
         // Escape for safe embedding in a JS string literal
@@ -107,13 +111,13 @@ public class DoomPlayPage {
             + "  <div class='hdr-left'><span style='color:#ddd'>" + escapeHtml(wadName) + "</span>" + SEP
             + "Session: <span id='sid' title='Click to copy' style='cursor:pointer;text-decoration:underline dotted'>"
             + sessionId + "</span></div>\n"
-            + "  <div>" + CONTROLS_HELP_LINK + "</div>\n"
+            + "  <div>" + CONTROLS_HELP_LINK + FULLSCREEN_LINK + "</div>\n"
             + "  <div class='hdr-right'>"
             + "<span class='stat' id='qualityStat' style='display:none'>Quality: <span id='qualityPct' style='color:#ffaa00'>--</span>%</span>"
             + "<span class='stat'>Latency: <span id='latency'>--</span> ms</span></div>\n"
             + "</div>\n"
             + "<div id='game-container' tabindex='0'>\n"
-            + "  <img id='frame' alt='DOOM Frame'/>\n"
+            + "  <img id='frame' alt=''/>\n"
             + "</div>\n"
             + "<div id='doomConsole'>\n"
             + "  <div id='consoleOut'></div>\n"
@@ -191,6 +195,7 @@ public class DoomPlayPage {
             + "var _evtSource = null, _ws = null, _wsOk = false;\n"
             + "function showGameEnded() {\n"
             + "  gameEnded = true;\n"
+            + "  if (window._releaseInput) _releaseInput();\n"
             + "  if (_evtSource) { _evtSource.close(); _evtSource = null; }\n"
             + "  if (_ws) { _ws.close(); _ws = null; }\n"
             + "  if (typeof _stopAll === 'function') _stopAll();\n"
@@ -727,14 +732,14 @@ public class DoomPlayPage {
             + escapeHtml(playerLabel) + SEP
             + "Match: " + matchId + SEP
             + rulesText + "</div>\n"
-            + "  <div>" + CONTROLS_HELP_LINK + "</div>\n"
+            + "  <div>" + CONTROLS_HELP_LINK + FULLSCREEN_LINK + "</div>\n"
             + "  <div class='hdr-right'>"
             + "<span class='stat' id='matchStatus'>Connecting...</span>"
             + "<span class='stat' id='qualityStat' style='display:none'>Quality: <span id='qualityPct' style='color:#ffaa00'>--</span>%</span>"
             + "<span class='stat'>Latency: <span id='latency'>--</span> ms</span></div>\n"
             + "</div>\n"
             + "<div id='game-container' tabindex='0'>\n"
-            + "  <img id='frame' alt='DOOM Frame'/>\n"
+            + "  <img id='frame' alt=''/>\n"
             // ── Lobby overlay HTML ─────────────────────────────────────────────
             + "  <div id='lobby-overlay'>\n"
             + "    <div id='lobby-title'>Deathmatch</div>\n"
@@ -839,6 +844,7 @@ public class DoomPlayPage {
             + "var _evtSource = null, _ws = null, _wsOk = false;\n"
             + "function showGameEnded() {\n"
             + "  gameEnded = true;\n"
+            + "  if (window._releaseInput) _releaseInput();\n"
             + "  if (_evtSource) { _evtSource.close(); _evtSource = null; }\n"
             + "  if (_ws) { _ws.close(); _ws = null; }\n"
             + "  if (typeof _stopAll === 'function') _stopAll();\n"

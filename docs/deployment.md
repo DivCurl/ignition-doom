@@ -119,7 +119,9 @@ All paths are relative to your Ignition gateway root (e.g. `http://localhost:808
 | `/system/doom/play` | Single-player (default WAD) |
 | `/system/doom/play?wad=DOOM2` | Single-player with WAD selection |
 | `/system/doom/play?wad=DOOM2&pwad=mymod.wad&skill=3` | Single-player with PWAD and skill level (0–4) |
-| `/system/doom/match/create?wad=DOOM2&players=2` | Create a 2-player deathmatch |
+| `/system/doom/play?wad=DOOM2&mlook=0&autoaim=0` | Single-player with mouselook and autoaim set (`1` = on, the default) |
+| `/system/doom/match/create?wad=DOOM2&players=2` | Create a 2-player deathmatch (`mlook` and `autoaim` work here too, as match rules) |
+| `/system/doom/controls` | Controls reference (keyboard and mouse); no password needed |
 | `/system/doom/health` | JSON health + session/match status |
 | `/system/doom/?settings=1` | Dashboard with the Admin Settings panel open (the old `/system/doom/admin` URL redirects here) |
 

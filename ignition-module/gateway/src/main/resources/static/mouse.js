@@ -144,6 +144,84 @@
     if (buttons !== 0) { buttons = 0; queue(); }
   });
 
+  // ── Full screen + keyboard lock ───────────────────────────────────────────
+  // In full screen, Chrome and Edge let a page take keys (Keyboard Lock API), so
+  // Ctrl+W fires instead of closing the tab and Esc reaches DOOM; holding Esc
+  // leaves full screen. Only the keys the game needs are taken, so Alt+F4 and
+  // other system shortcuts always work. The API only exists on HTTPS or
+  // localhost; elsewhere, and in other browsers, this is plain full screen.
+  var LOCKED_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyN', 'KeyT', 'Tab', 'Escape'];
+
+  // Gives back everything the game took: keyboard lock, mouse capture, full
+  // screen. Called when the game ends, so the tab can always be closed normally.
+  window._releaseInput = function () {
+    try { if (navigator.keyboard && navigator.keyboard.unlock) navigator.keyboard.unlock(); } catch (e) { /* ignore */ }
+    try { if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock(); } catch (e) { /* ignore */ }
+    try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(function () {}); } catch (e) { /* ignore */ }
+  };
+  window.addEventListener('pagehide', window._releaseInput);
+
+  var fsLink = document.getElementById('fsLink');
+  if (fsLink && document.documentElement.requestFullscreen) {
+    fsLink.addEventListener('click', function (e) {
+      e.preventDefault();
+      if (document.fullscreenElement) {
+        document.exitFullscreen();
+        return;
+      }
+      document.documentElement.requestFullscreen().then(function () {
+        if (navigator.keyboard && navigator.keyboard.lock) {
+          navigator.keyboard.lock(LOCKED_KEYS).catch(function () {});
+        }
+        container.focus();
+      }).catch(function () {});
+    });
+    document.addEventListener('fullscreenchange', function () {
+      var on = !!document.fullscreenElement;
+      fsLink.textContent = on ? '[Exit Fullscreen]' : '[Fullscreen]';
+      if (!on && navigator.keyboard && navigator.keyboard.unlock) navigator.keyboard.unlock();
+    });
+  } else if (fsLink) {
+    fsLink.style.display = 'none';
+  }
+
+  // ── Diagnostics: add &mousedebug=1 to the play URL, or run
+  //    localStorage.doomMouseDebug = '1' in the browser console and reload
+  //    (survives the redirects that drop extra URL parameters).
+  // Shows, per half second, how many mousemove events the browser delivered and
+  // how many input messages went to the server. If the view sticks while events
+  // keep arriving, the problem is downstream; if events drop to 0 while the mouse
+  // is moving, the browser or OS stopped delivering them.
+  var debugOn = /[?&]mousedebug=1/.test(location.search);
+  try { debugOn = debugOn || localStorage.getItem('doomMouseDebug') === '1'; } catch (e) { /* storage blocked */ }
+  if (debugOn) {
+    var dbg = document.createElement('div');
+    dbg.style.cssText = 'position:absolute;bottom:8px;left:8px;background:rgba(0,0,0,0.75);color:#8f8;'
+      + 'font:12px monospace;padding:6px 10px;z-index:60;pointer-events:none;white-space:pre';
+    container.appendChild(dbg);
+    var nMove = 0, nSent = 0, pxX = 0, maxGap = 0, lastMove = 0, keys = '';
+    document.addEventListener('mousemove', function (e) {
+      if (!locked()) return;
+      var now = performance.now();
+      if (lastMove && now - lastMove > maxGap) maxGap = now - lastMove;
+      lastMove = now; nMove++; pxX += Math.abs(e.movementX);
+    });
+    var origSend = window._sendInputLine;
+    window._sendInputLine = function (line) {
+      if (line.charAt(0) === 'm') nSent++;
+      return origSend(line);
+    };
+    document.addEventListener('keydown', function (e) { keys = e.code; });
+    document.addEventListener('keyup', function () { keys = ''; });
+    setInterval(function () {
+      dbg.textContent = 'locked ' + (locked() ? 'yes' : 'NO') + '  ws ' + (_wsOpen() ? 'open' : 'POST')
+        + '\nmousemove/0.5s ' + nMove + '   |dx| px ' + Math.round(pxX)
+        + '\nsent/0.5s ' + nSent + '   max gap ' + Math.round(maxGap) + ' ms'
+        + '\nkey ' + (keys || '-');
+      nMove = 0; nSent = 0; pxX = 0; maxGap = 0;
+    }, 500);
+  }
+
   // ── Options ───────────────────────────────────────────────────────────────
   // Called by the page when its input channel (WebSocket or POST fallback) is ready.
   window._sendOpts = function () {

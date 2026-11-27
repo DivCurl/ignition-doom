@@ -81,7 +81,9 @@ final class DoomControlsPage {
             + "(red outline).</li>\n"
             + "<li>Most browsers close the tab on <kbd>Ctrl</kbd>+<kbd>W</kbd> and won't let a page "
             + "stop it, so firing with <kbd>Ctrl</kbd> while moving with <kbd>W</kbd> can close the game. "
-            + "Fire with the mouse, or move with the arrow keys.</li>\n"
+            + "Fire with the mouse, or move with the arrow keys. In Chrome or Edge, <b>[Fullscreen]</b> "
+            + "at the top of the game lets DOOM keep these keys when the gateway is on HTTPS or "
+            + "localhost (hold <kbd>Esc</kbd> to leave full screen).</li>\n"
             + "<li>Browsers may also keep <kbd>F5</kbd>, <kbd>F11</kbd> and <kbd>F12</kbd> for themselves.</li>\n"
             + "</ul></div>\n"
             + "</div></body></html>\n";

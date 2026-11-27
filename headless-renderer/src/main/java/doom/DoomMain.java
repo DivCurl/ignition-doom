@@ -1392,8 +1392,12 @@ public class DoomMain<T, V> extends DoomStatus<T, V> implements IDoomGameNetwork
                     mousebuttons(1, ev.isMouse(event_t.MOUSE_RIGHT));
                     mousebuttons(2, ev.isMouse(event_t.MOUSE_MID));
                     ev.withMouse(mouseEvent -> {
-                        mousex = mouseEvent.x * (mouseSensitivity + 5) / 10;
-                        mousey = mouseEvent.y * (mouseSensitivity + 5) / 10;
+                        // Add up, don't overwrite (as PrBoom does): BuildTiccmd zeroes these
+                        // after use, but events can arrive while no ticcmd is built (e.g. a
+                        // deathmatch engine waiting on its peers), and overwriting lost that
+                        // movement.
+                        mousex += mouseEvent.x * (mouseSensitivity + 5) / 10;
+                        mousey += mouseEvent.y * (mouseSensitivity + 5) / 10;
                     });
                 }
                 return true; // eat events 

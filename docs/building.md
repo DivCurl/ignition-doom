@@ -12,6 +12,7 @@ How to build, package, sign and test the module. To install and run a finished `
 - [Package the .modl](#package-the-modl)
 - [Signing the module (recommended)](#signing-the-module-recommended)
 - [Testing Ignition versions](#testing-ignition-versions)
+- [Engine integration test](#engine-integration-test)
 
 ---
 
@@ -189,3 +190,20 @@ Each version gets its own gateway on ports 18100 and up. 2027.x tags automatical
 `-ign2027` build (package it with `-Target 2027` first). A signed `.modl` (`--modl`) installs
 without allowing unsigned modules, so the test checks signing too. Windows users can run it from
 Git Bash. Run the script with `--help` for all options.
+
+---
+
+## Engine integration test
+
+`MouselookEngineIT` runs real engines (no gateway needed) with the shareware `DOOM1.WAD` from
+`assets/iwads/`. It checks mouselook (pitch, look limits, centring), turning, wheel weapon
+changes and firing in single-player, and that two deathmatch engines stay in sync, including
+that no mouse movement is lost while one engine waits for the other.
+
+It is not part of the normal build (`mvn package` runs only the fast unit tests). Build first,
+then run it on its own; it takes about 20 seconds:
+
+```bash
+cd ignition-module && mvn install -DskipTests
+cd ../headless-renderer && mvn test -Dtest=MouselookEngineIT
+```
