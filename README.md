@@ -78,9 +78,9 @@ Engine (per session, child ClassLoader)
 
 - Java 11+, Maven 3.8+ *(module compiles to Java 11 bytecode; Java 17 required at runtime by Ignition)*
 - Ignition gateway, self-hosted or Docker (tested on 8.3.1)
-- **Unsigned module installation must be enabled** on the target gateway (`allowunsignedmodules=true` in `ignition.conf`) — the module is not signed by Inductive Automation
+- **Either** a signed `.modl` (see [Signing the module](#signing-the-module-optional)) **or** unsigned module installation enabled on the target gateway (`allowunsignedmodules=true` in `ignition.conf`)
 - Docker + image `inductiveautomation/ignition:8.3.1` *(only for the container-based setup)*
-- Internet access for first-run asset downloads (DOOM1.WAD, soundfonts)
+- Internet access for first-run asset downloads (soundfonts; DOOM1.WAD ships with the repo)
 
 ---
 
@@ -89,31 +89,26 @@ Engine (per session, child ClassLoader)
 **1. Download assets (first run only)**
 
 ```bat
-get-assets.bat        # Windows
-./get-assets.sh       # Linux/Mac
+scripts\get-assets.bat        # Windows
+scripts/get-assets.sh         # Linux/Mac
 ```
 
-Downloads DOOM1.WAD (shareware, ~4 MB) and FluidR3_GM soundfonts (~99 MB) into `assets/`.
+Downloads the FluidR3_GM soundfonts (~99 MB) into `assets/`. DOOM1.WAD (shareware, ~4 MB) is already in the repo; the script restores it from git if it is missing.
 
 **2. Build the module**
 
 ```bash
-# Install parent POM and common module to local Maven repo
 cd ignition-module
-mvn install -N
-mvn install -pl common
-
-# Build headless-renderer JAR
-# Note: use 'install' not 'clean install' — mvn clean may fail if an IDE
-# has a file lock on target/test-classes. Delete target/classes manually
-# first if you suspect stale IDE-compiled files are inflating the JAR.
-cd ../headless-renderer
-mvn install -DskipTests
-
-# Build gateway + module JARs
-cd ../ignition-module
 mvn package -DskipTests
 ```
+
+This one command builds `common`, `headless-renderer` and `gateway` in dependency order. The
+`ignition-module/pom.xml` reactor includes `../headless-renderer`. Avoid `mvn clean` if an IDE has
+the build output open, because a file lock can make it fail. In that case, delete the
+`target/classes` folders by hand.
+
+The gateway deliberately has no compile dependency on `headless-renderer`. Any accidental import of
+engine classes (`mochadoom.*`, `doom.*`, `com.doom.headless.*`, …) into gateway code fails the build.
 
 The Ignition SDK is fetched automatically from Inductive Automation's public Maven repository.
 If that's unavailable, see [ignition-module/INSTALL-SDK.md](ignition-module/INSTALL-SDK.md).
@@ -135,30 +130,76 @@ powershell -ExecutionPolicy Bypass -File ignition-module\package-doom-modl.ps1
 bash ignition-module/package-doom-modl.sh
 ```
 
+#### Signing the module (optional)
+
+A signed module installs on gateways that don't allow unsigned modules. Signing uses Inductive
+Automation's [module-signer](https://github.com/inductiveautomation/module-signer) with a
+self-signed RSA code-signing certificate.
+
+Create the certificate once. This needs `keytool` from the JDK; the bash version also needs `openssl`.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ignition-module\signing\new-signing-cert.ps1   # Windows
+```
+```bash
+bash ignition-module/signing/new-signing-cert.sh                                       # Linux/Mac
+```
+
+This writes `ignition-module/signing/doom-signing.p12` (the private key) and `doom-signing.p7b`
+(the certificate chain). Both are gitignored. Back up the `.p12` and keep it private. If you
+replace it, every gateway has to accept the new certificate again. The script prints the
+certificate's SHA-256 fingerprint. Publish it with releases so gateway admins can check that the
+certificate they accept is yours.
+
+Once the keystore exists, the packaging scripts also write
+`doom-perspective-vX.Y.Z-signed.modl`, next to the unsigned file. To sign an existing `.modl`
+directly, run `signing/sign-modl.ps1 -ModlIn <file>` or `signing/sign-modl.sh <file>`.
+
+- **Password**: set `DOOM_SIGNING_PASSWORD`, or enter it when prompted.
+- **Skip signing**: pass `-NoSign` / `--no-sign` to the packaging scripts.
+- **Different certificate**: set `DOOM_SIGNING_KEYSTORE`, `DOOM_SIGNING_CHAIN` and `DOOM_SIGNING_ALIAS`.
+  This works with any RSA code-signing keystore (`.p12`/`.pfx`/`.jks`) and its `.p7b` chain,
+  including a certificate issued by a CA.
+- **First run**: the module-signer jar is downloaded from IA's public Nexus into
+  `ignition-module/signing/tools/` and checked against a pinned SHA-1.
+
+When a module's certificate is self-signed rather than issued by a trusted CA, the gateway asks
+the admin to review and accept the certificate when the module is installed.
+
 **4. Deploy to Ignition**
 
 **Option A — Docker (recommended for local development)**
 
-Run once to create and configure the container:
+Run once to create and configure the container (pick any container name):
 
 ```bat
-setup-ignition-container.bat        # Windows
-./setup-ignition-container.sh       # Linux/Mac
+scripts\setup-ignition-container.bat <container-name>     # Windows
+scripts/setup-ignition-container.sh <container-name>      # Linux/Mac
 ```
 
-To add or refresh assets (WADs, soundfonts, branding) in an already-running container:
+> **Warning:** if a container with that name already exists, setup **deletes and recreates it**,
+> and all gateway data in it is lost. The script asks you to type the name to confirm; `-y` skips
+> the prompt. Set `IGNITION_PORT` to publish the gateway on a host port other than 8088.
+
+To add or refresh assets (WADs, soundfonts, branding, PWADs) in an already-running container:
 
 ```bat
-deploy-assets.bat                   # Windows
-./deploy-assets.sh                  # Linux/Mac
+scripts\deploy-assets.bat <container-name> [-w] [-s] [-b] [-p] [--clean]    # Windows
+scripts/deploy-assets.sh <container-name> [-w] [-s] [-b] [-p] [--clean]     # Linux/Mac
 ```
 
-Sets up a local Ignition Docker container (using image `inductiveautomation/ignition:8.3.1`) and enables unsigned modules. Asset deployment is handled by `deploy-assets`, which is called automatically during setup and can be re-run independently at any time.
+With no flags, every category is deployed. `-w` deploys WADs, `-s` soundfonts, `-b` branding and
+`-p` PWADs. `--clean` deletes the selected categories in the container before redeploying them.
+
+Setup creates a local Ignition Docker container (using image `inductiveautomation/ignition:8.3.1`)
+and enables unsigned modules. It calls `deploy-assets` automatically, and you can re-run
+`deploy-assets` on its own at any time. All scripts can be run from any directory.
 
 **Option B — Existing Ignition gateway**
 
-1. Enable unsigned modules: add `allowunsignedmodules=true` to `ignition.conf` in your Ignition
-   data directory, then restart the gateway.
+1. Use the `-signed.modl` build ([Signing the module](#signing-the-module-optional)), *or* enable
+   unsigned modules: add `allowunsignedmodules=true` to `ignition.conf` in your Ignition data
+   directory, then restart the gateway.
 2. Copy WAD files into `<ignition-install>/user-lib/doom/`
 3. Copy soundfont JS files into `<ignition-install>/user-lib/doom/soundfonts/`
 4. Install the module: **Gateway Config → Modules → Install or Upgrade Module**, select the `.modl`
@@ -237,10 +278,12 @@ All paths are relative to your Ignition gateway root (e.g. `http://localhost:808
 ignition-doom/
 ├── README.md                        This file
 ├── LICENSE                          GNU General Public License v3
+├── .gitattributes                   Forces LF for .sh and CRLF for .bat scripts on every platform
 ├── CREDITS.md                       Third-party licenses and attribution
-├── get-assets.bat / get-assets.sh   First-run downloader — DOOM1.WAD + soundfonts
-├── setup-ignition-container.bat/.sh One-time Docker container creation and configuration
-├── deploy-assets.bat / deploy-assets.sh  Copy WADs, soundfonts, and branding to a running container
+├── scripts/                         Setup and helper scripts (each as .bat + .sh; run from any directory)
+│   ├── get-assets                   First-run downloader — soundfonts (restores DOOM1.WAD from git if missing)
+│   ├── setup-ignition-container     One-time Docker container creation and configuration
+│   └── deploy-assets                Copy WADs, soundfonts, branding, and PWADs to a running container
 ├── headless-renderer/               Mocha DOOM + headless rendering pipeline (JAR)
 │   └── src/main/java/
 │       ├── com/doom/headless/       SessionRunner, FrameEncoder, DoomSoundExtractor
@@ -248,7 +291,7 @@ ignition-doom/
 │       ├── s/                       HeadlessMusicDriver, HeadlessSoundDriver
 │       ├── v/renderers/             BufferedRenderer, HeadlessIndexedRenderer
 │       └── mochadoom/               Engine entry point (headless + singleton)
-├── ignition-module/                 Ignition Gateway Module (Maven multi-module)
+├── ignition-module/                 Ignition Gateway Module; its pom.xml is the build reactor (also builds ../headless-renderer)
 │   ├── common/                      TikcmdBus + ISessionRunner (parent classloader)
 │   ├── gateway/                     SessionManager, DoomSession, DoomInputServlet, ...
 │   │   └── src/main/java/com/doom/gateway/
@@ -257,6 +300,7 @@ ignition-doom/
 │   ├── module.xml                   Module descriptor
 │   ├── package-doom-modl.ps1        Windows: packages JARs into .modl (PowerShell)
 │   ├── package-doom-modl.sh         Linux/Mac: packages JARs into .modl (bash)
+│   ├── signing/                     Optional module signing (new-signing-cert / sign-modl, .ps1 + .sh)
 │   ├── build/                       Deployable .modl artifacts (gitignored)
 │   ├── install-sdk.bat              Fallback: extract SDK JARs from Docker container
 │   └── INSTALL-SDK.md               SDK installation guide
@@ -285,7 +329,7 @@ GNU General Public License v3 or later. See [LICENSE](LICENSE) for the full text
 
 This project incorporates [Mocha DOOM](https://github.com/GoodSign2017/mochadoom) (GPL v3) and the
 [DOOM source code](https://github.com/id-Software/DOOM) (GPL v2) by id Software. DOOM1.WAD
-(shareware) is freely redistributable. Commercial WAD files must be supplied by the user.
+(shareware) is included under id Software's shareware terms and is not covered by the GPL. Commercial WAD files must be supplied by the user.
 FluidR3_GM soundfont: Creative Commons Attribution 3.0. See [CREDITS.md](CREDITS.md) for full
 attribution.
 

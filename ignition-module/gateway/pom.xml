@@ -24,19 +24,12 @@
             <version>${project.version}</version>
         </dependency>
 
-        <!-- Headless renderer — PROVIDED scope only.
-             Phase 5.2: gateway.jar must NOT reference engine classes directly.
-             The JAR is in the .modl so it is available at runtime (loaded by
-             SessionClassLoader child CL per session), but gateway code must never
-             import mochadoom.*, doom.*, etc. Having it provided here lets the
-             build succeed if any accidental import slips in, but we verify at
-             runtime that all engine access goes through ISessionRunner. -->
-        <dependency>
-            <groupId>com.doom.perspective</groupId>
-            <artifactId>headless-renderer</artifactId>
-            <version>${project.version}</version>
-            <scope>provided</scope>
-        </dependency>
+        <!-- Deliberately NO dependency on headless-renderer.
+             gateway.jar must never reference engine classes (mochadoom.*, doom.*,
+             com.doom.headless.*, ...) directly; all engine access goes through
+             ISessionRunner (common) and the per-session SessionClassLoader.
+             Leaving the renderer off the compile classpath makes the compiler
+             enforce that rule: an accidental engine import fails the build. -->
 
         <!-- Ignition SDK -->
         <dependency>

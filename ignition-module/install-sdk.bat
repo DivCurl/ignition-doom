@@ -1,5 +1,9 @@
 @echo off
 REM Extract and install Ignition SDK from Docker container
+REM Run from anywhere; the sdk folder is created next to this script (ignition-module\sdk).
+
+setlocal
+cd /d "%~dp0"
 
 echo ====================================
 echo Installing Ignition SDK
@@ -41,6 +45,11 @@ call mvn install:install-file -Dfile=sdk/ignition-common.jar ^
     -DartifactId=ignition-common ^
     -Dversion=8.3.1 ^
     -Dpackaging=jar
+if errorlevel 1 (
+    echo ERROR: mvn install:install-file failed for ignition-common
+    pause
+    exit /b 1
+)
 
 echo [4/4] Installing gateway-api to Maven...
 call mvn install:install-file -Dfile=sdk/gateway-api.jar ^
@@ -48,12 +57,17 @@ call mvn install:install-file -Dfile=sdk/gateway-api.jar ^
     -DartifactId=gateway-api ^
     -Dversion=8.3.1 ^
     -Dpackaging=jar
+if errorlevel 1 (
+    echo ERROR: mvn install:install-file failed for gateway-api
+    pause
+    exit /b 1
+)
 
 echo.
 echo ====================================
 echo SDK Installation Complete!
 echo ====================================
 echo.
-echo You can now run: build-module.bat
+echo You can now build the module - see "Build the module" in README.md.
 echo.
 pause

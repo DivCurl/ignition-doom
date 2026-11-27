@@ -12,7 +12,7 @@ ignore/
 assets/pwads/*
 !assets/pwads/.gitkeep
 
-# Soundfonts — ~99 MB of Base64-encoded MP3 audio, fetched by get-assets.bat/.sh
+# Soundfonts — ~99 MB of Base64-encoded MP3 audio, fetched by scripts/get-assets.bat/.sh
 # CC-BY 3.0 (FluidR3_GM) and MIT licenses permit redistribution, but the size is prohibitive
 assets/soundfonts/*
 !assets/soundfonts/.gitkeep
@@ -20,6 +20,14 @@ assets/soundfonts/*
 # Third-party logos (trademarks — not redistributable)
 assets/branding/*
 !assets/branding/.gitkeep
+
+# Module signing — private keystore, chain, and the downloaded module-signer tool
+ignition-module/signing/*.p12
+ignition-module/signing/*.pfx
+ignition-module/signing/*.jks
+ignition-module/signing/*.p7b
+ignition-module/signing/*.pem
+ignition-module/signing/tools/
 
 # Maven build artifacts
 **/target/

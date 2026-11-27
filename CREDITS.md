@@ -39,7 +39,16 @@ Licensed under the GNU General Public License v2 or later.
 
 Copyright (C) 1993-1996 id Software, Inc.
 
-The DOOM shareware WAD (DOOM1.WAD) is freely redistributable.
+`assets/iwads/DOOM1.WAD` is the unmodified v1.9 DOOM shareware WAD
+(MD5 `f0cefca49926d00903cf57551d901abe`). It is included under id Software's
+original shareware distribution terms: it may be shared freely as long as it is
+not modified and no fee is charged, and commercial distribution requires
+permission from id Software.
+
+**DOOM1.WAD is not covered by this project's GPLv3 license.** It is a separate
+work with its own terms. It is not packaged inside the `.modl` file; it is
+copied to the gateway's `user-lib/doom/iwads/` directory separately.
+
 Commercial WAD files (DOOM.WAD, DOOM2.WAD, TNT.WAD, PLUTONIA.WAD) are
 not included in this repository and must be supplied by the user.
 
@@ -59,8 +68,8 @@ https://github.com/gleitz/midi-js-soundfonts
 Percussion file sourced from the paulrosen fork:
 https://github.com/paulrosen/midi-js-soundfonts
 
-These files are not included in the repository. Run `get-assets.bat` (Windows)
-or `get-assets.sh` (Linux/Mac) to download them.
+These files are not included in the repository. Run `scripts\get-assets.bat` (Windows)
+or `scripts/get-assets.sh` (Linux/Mac) to download them.
 
 ---
 

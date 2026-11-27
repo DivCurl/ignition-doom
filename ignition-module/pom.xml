@@ -20,8 +20,13 @@
         <ignition.version>8.3.1</ignition.version>
     </properties>
 
+    <!-- One reactor builds everything in dependency order:
+         common -> headless-renderer (needs common) -> gateway.
+         headless-renderer lives outside this folder and keeps its own standalone
+         pom (no <parent>); it is listed here only so `mvn package` builds it too. -->
     <modules>
         <module>common</module>
+        <module>../headless-renderer</module>
         <module>gateway</module>
     </modules>
 

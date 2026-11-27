@@ -2,25 +2,27 @@
 # ============================================================================
 # Perspective DOOM — First-Run Asset Downloader
 #
-# Downloads freely-distributable assets required to run the module:
-#   - DOOM1.WAD  (id Software shareware release — freely redistributable)
+# Fetches assets required to run the module:
+#   - DOOM1.WAD  (id Software shareware — ships with the repo; restored from git if missing)
 #   - FluidR3_GM soundfonts  (CC-BY 3.0 / MIT)
+# (soundfont-player.min.js is committed under the gateway's static resources.)
 #
-# Run once before setup-ignition-container.sh.
+# Run once before scripts/setup-ignition-container.sh.
 # Files that already exist are skipped.
 # ============================================================================
 
+cd "$(dirname "$0")/.." || exit 1   # paths below are relative to the repo root
+
 WAD_DIR="assets/iwads"
 SF_DIR="assets/soundfonts"
-STATIC_DIR="ignition-module/gateway/src/main/resources/static"
 
 # DOOM1.WAD — id Software shareware, v1.9 (4.1 MB, md5: f0cefca49926d00903cf57551d901abe)
-DOOM1_URL="https://distro.ibiblio.org/slitaz/sources/packages/d/doom1.wad"
+# Committed to the repo (see CREDITS.md); restored from git if missing.
+DOOM1_REPO_PATH="assets/iwads/DOOM1.WAD"
 
 # Soundfonts
 SF_BASE="https://cdn.jsdelivr.net/gh/gleitz/midi-js-soundfonts@master/FluidR3_GM"
 PERC_URL="https://raw.githubusercontent.com/paulrosen/midi-js-soundfonts/gh-pages/FluidR3_GM/percussion-mp3.js"
-SP_URL="https://cdn.jsdelivr.net/npm/soundfont-player@0.12.0/dist/soundfont-player.min.js"
 
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
@@ -53,45 +55,30 @@ download() {
     fi
 }
 
-mkdir -p "$WAD_DIR" "$SF_DIR" "$STATIC_DIR"
+mkdir -p "$WAD_DIR" "$SF_DIR"
 
 OVERALL_FAIL=0
 
 # ── Step 1: DOOM1.WAD ────────────────────────────────────────────────────────
-echo "[1/3] DOOM1.WAD (id Software shareware)"
+echo "[1/2] DOOM1.WAD (id Software shareware)"
 if [ -f "$WAD_DIR/DOOM1.WAD" ] || [ -f "$WAD_DIR/doom1.wad" ]; then
     echo "      SKIP (already present)"
 else
-    echo "      Downloading ~4.1 MB from ibiblio..."
-    if download "$DOOM1_URL" "$WAD_DIR/DOOM1.WAD"; then
+    echo "      Restoring from the git repository..."
+    if command -v git >/dev/null 2>&1 && git checkout -- "$DOOM1_REPO_PATH" 2>/dev/null; then
         echo "      OK"
     else
-        rm -f "$WAD_DIR/DOOM1.WAD"
-        echo -e "      ${RED}ERROR: Could not download DOOM1.WAD automatically.${NC}"
-        echo "      Place DOOM1.WAD manually in $WAD_DIR/ and re-run."
-        echo "      (The id Software shareware release is freely redistributable.)"
+        echo -e "      ${RED}ERROR: Could not restore DOOM1.WAD from git.${NC}"
+        echo "      DOOM1.WAD ships with this repository. Re-clone it, or download"
+        echo "      $DOOM1_REPO_PATH from https://github.com/DivCurl/ignition-doom"
+        echo "      into $WAD_DIR/ and re-run."
         OVERALL_FAIL=1
     fi
 fi
 
-# ── Step 2: soundfont-player.min.js ─────────────────────────────────────────
+# ── Step 2: FluidR3_GM instrument files ──────────────────────────────────────
 echo ""
-echo "[2/3] soundfont-player.min.js"
-if [ -f "$SF_DIR/soundfont-player.min.js" ]; then
-    echo "      SKIP (already present)"
-else
-    if download "$SP_URL" "$STATIC_DIR/soundfont-player.min.js"; then
-        cp "$STATIC_DIR/soundfont-player.min.js" "$SF_DIR/soundfont-player.min.js"
-        echo "      OK"
-    else
-        echo -e "      ${RED}ERROR: Failed to download soundfont-player.min.js${NC}"
-        OVERALL_FAIL=1
-    fi
-fi
-
-# ── Step 3: FluidR3_GM instrument files ──────────────────────────────────────
-echo ""
-echo "[3/3] FluidR3_GM instrument files (covers all supported WADs)"
+echo "[2/2] FluidR3_GM instrument files (covers all supported WADs)"
 
 # Derived from MusInstrumentScanner output across DOOM1, DOOM2, TNT, and PLUTONIA.
 INSTRUMENTS="
@@ -155,7 +142,7 @@ if [ "$OVERALL_FAIL" -ne 0 ]; then
 else
     echo -e "  ${GREEN}Done. All required assets are in place.${NC}"
     echo ""
-    echo "  Next: run ./setup-ignition-container.sh"
+    echo "  Next: run scripts/setup-ignition-container.sh"
 fi
 echo "============================================================================"
 echo ""

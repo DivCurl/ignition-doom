@@ -2,80 +2,65 @@
 REM ============================================================================
 REM Perspective DOOM — First-Run Asset Downloader
 REM
-REM Downloads freely-distributable assets required to run the module:
-REM   - DOOM1.WAD  (id Software shareware release — freely redistributable)
+REM Fetches assets required to run the module:
+REM   - DOOM1.WAD  (id Software shareware — ships with the repo; restored from git if missing)
 REM   - FluidR3_GM soundfonts  (CC-BY 3.0 / MIT)
+REM (soundfont-player.min.js is committed under the gateway's static resources.)
 REM
-REM Run once before setup-ignition-container.bat.
+REM Run once before scripts\setup-ignition-container.bat.
 REM Files that already exist are skipped.
 REM ============================================================================
 
 setlocal enabledelayedexpansion
+cd /d "%~dp0.."
 
 set WAD_DIR=assets\iwads
 set SF_DIR=assets\soundfonts
-set STATIC_DIR=ignition-module\gateway\src\main\resources\static
 
 REM DOOM1.WAD — id Software shareware, v1.9 (4.1 MB, md5: f0cefca49926d00903cf57551d901abe)
-set DOOM1_URL=https://distro.ibiblio.org/slitaz/sources/packages/d/doom1.wad
+REM Committed to the repo (see CREDITS.md); restored from git if missing.
+set DOOM1_REPO_PATH=assets/iwads/DOOM1.WAD
 
 REM Soundfonts
 set SF_BASE=https://cdn.jsdelivr.net/gh/gleitz/midi-js-soundfonts@master/FluidR3_GM
 set PERC_URL=https://raw.githubusercontent.com/paulrosen/midi-js-soundfonts/gh-pages/FluidR3_GM/percussion-mp3.js
-set SP_URL=https://cdn.jsdelivr.net/npm/soundfont-player@0.12.0/dist/soundfont-player.min.js
 
 echo.
 echo ============================================================================
-echo  Perspective DOOM — First-Run Asset Downloader
+echo  Perspective DOOM - First-Run Asset Downloader
 echo ============================================================================
 echo.
 
 REM Create output dirs
 if not exist "%WAD_DIR%"    mkdir "%WAD_DIR%"
 if not exist "%SF_DIR%"     mkdir "%SF_DIR%"
-if not exist "%STATIC_DIR%" mkdir "%STATIC_DIR%"
 
 set OVERALL_FAIL=0
 
 REM ── Step 1: DOOM1.WAD ────────────────────────────────────────────────────────
-echo [1/3] DOOM1.WAD (id Software shareware)
+echo [1/2] DOOM1.WAD (id Software shareware)
 if exist "%WAD_DIR%\DOOM1.WAD" (
-    echo      SKIP (already present)
+    echo      SKIP ^(already present^)
 ) else if exist "%WAD_DIR%\doom1.wad" (
-    echo      SKIP (already present as doom1.wad)
+    echo      SKIP ^(already present as doom1.wad^)
 ) else (
-    echo      Downloading ~4.1 MB from ibiblio...
-    powershell -Command "Invoke-WebRequest -Uri '%DOOM1_URL%' -OutFile '%WAD_DIR%\DOOM1.WAD' -UseBasicParsing"
+    echo      Restoring from the git repository...
+    git checkout -- "%DOOM1_REPO_PATH%" >nul 2>&1
     if errorlevel 1 (
         echo.
-        echo      ERROR: Could not download DOOM1.WAD automatically.
-        echo      Place DOOM1.WAD manually in %WAD_DIR%\ and re-run.
-        echo      (The id Software shareware release is freely redistributable.)
+        echo      ERROR: Could not restore DOOM1.WAD from git.
+        echo      DOOM1.WAD ships with this repository. Re-clone it, or download
+        echo      %DOOM1_REPO_PATH% from https://github.com/DivCurl/ignition-doom
+        echo      into %WAD_DIR%\ and re-run.
         set OVERALL_FAIL=1
     ) else (
         echo      OK
     )
 )
 
-REM ── Step 2: soundfont-player.min.js ─────────────────────────────────────────
+REM ── Step 2: FluidR3_GM instrument files ──────────────────────────────────────
 echo.
-echo [2/3] soundfont-player.min.js
-if exist "%SF_DIR%\soundfont-player.min.js" (
-    echo      SKIP (already present)
-) else (
-    powershell -Command "Invoke-WebRequest -Uri '%SP_URL%' -OutFile '%STATIC_DIR%\soundfont-player.min.js' -UseBasicParsing"
-    if errorlevel 1 (
-        echo      ERROR: Failed to download soundfont-player.min.js
-        set OVERALL_FAIL=1
-    ) else (
-        copy /Y "%STATIC_DIR%\soundfont-player.min.js" "%SF_DIR%\soundfont-player.min.js" >nul
-        echo      OK
-    )
-)
-
-REM ── Step 3: FluidR3_GM instrument files ──────────────────────────────────────
-echo.
-echo [3/3] FluidR3_GM instrument files (covers all supported WADs)
+echo [2/2] FluidR3_GM instrument files (covers all supported WADs)
 
 REM Derived from MusInstrumentScanner output across DOOM1, DOOM2, TNT, and PLUTONIA.
 set INSTRUMENTS=^
@@ -138,7 +123,7 @@ for %%I in (%INSTRUMENTS%) do (
     if exist "%SF_DIR%\!FILE!" (
         set /a SF_SKIP+=1
     ) else (
-        powershell -Command "Invoke-WebRequest -Uri '%SF_BASE%/!FILE!' -OutFile '%SF_DIR%\!FILE!' -UseBasicParsing" 2>nul
+        powershell -NoProfile -Command "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '%SF_BASE%/!FILE!' -OutFile '%SF_DIR%\!FILE!' -UseBasicParsing" 2>nul
         if errorlevel 1 (
             echo      FAIL: %%I
             set /a SF_FAIL+=1
@@ -152,7 +137,7 @@ REM percussion comes from paulrosen fork — gleitz doesn't include it
 if exist "%SF_DIR%\percussion-mp3.js" (
     set /a SF_SKIP+=1
 ) else (
-    powershell -Command "Invoke-WebRequest -Uri '%PERC_URL%' -OutFile '%SF_DIR%\percussion-mp3.js' -UseBasicParsing" 2>nul
+    powershell -NoProfile -Command "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '%PERC_URL%' -OutFile '%SF_DIR%\percussion-mp3.js' -UseBasicParsing" 2>nul
     if errorlevel 1 (
         echo      FAIL: percussion
         set /a SF_FAIL+=1
@@ -177,10 +162,9 @@ if %OVERALL_FAIL% NEQ 0 (
 ) else (
     echo  Done. All required assets are in place.
     echo.
-    echo  Next: run setup-ignition-container.bat
+    echo  Next: run scripts\setup-ignition-container.bat
 )
 echo ============================================================================
 echo.
 
-endlocal
-exit /b %OVERALL_FAIL%
+endlocal & exit /b %OVERALL_FAIL%

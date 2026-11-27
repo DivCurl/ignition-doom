@@ -1,0 +1,12 @@
+# Keep script line endings correct on every platform, regardless of core.autocrlf:
+# bash (incl. WSL) fails on CRLF scripts; cmd.exe can misparse LF-only batch files.
+*.sh   text eol=lf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# Binary game/asset data — never touch line endings or attempt diffs
+*.wad  binary
+*.WAD  binary
+*.modl binary
+*.p12  binary
+*.p7b  binary

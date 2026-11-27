@@ -6,19 +6,37 @@
 # - DOOM WAD file installation
 # - Unsigned module support enabled
 # - Proper directory structure and permissions
+#
+# Usage:  scripts/setup-ignition-container.sh <container-name> [-y|--yes]
+#
+#   If a container with that name already exists it is DELETED and recreated
+#   (all gateway data in it is lost). You are asked to confirm unless -y is given.
+#   Set IGNITION_PORT to publish the gateway on a host port other than 8088.
 # ============================================================================
 
 set -e  # Exit on error
 
+cd "$(dirname "$0")/.."          # asset paths below are relative to the repo root
+export MSYS_NO_PATHCONV=1     # Git Bash: don't rewrite container paths as Windows paths
+
+USAGE="Usage: scripts/setup-ignition-container.sh <container-name> [-y|--yes]"
 # Container name (mandatory first argument)
-if [ -z "$1" ]; then
+if [ -z "$1" ] || [ "${1#-}" != "$1" ]; then
     echo "ERROR: Container name is required as the first argument."
-    echo "Usage: ./setup-ignition-container.sh <container-name>"
+    echo "$USAGE"
     exit 1
 fi
 CONTAINER_NAME="$1"
+shift
+ASSUME_YES=false
+for arg in "$@"; do
+    case "$arg" in
+        -y|--yes) ASSUME_YES=true ;;
+        *) echo "ERROR: Unknown option: $arg"; echo "$USAGE"; exit 1 ;;
+    esac
+done
 IGNITION_IMAGE="inductiveautomation/ignition:8.3.1"
-IGNITION_PORT="8088"
+IGNITION_PORT="${IGNITION_PORT:-8088}"
 CONTAINER_WAD_PATH="/usr/local/bin/ignition/user-lib/doom"
 
 # Colors for output
@@ -46,14 +64,35 @@ if [ ! -f "assets/iwads/DOOM1.WAD" ] && [ ! -f "assets/iwads/doom1.wad" ]; then
     echo "============================================================================"
     echo -e "  ${RED}ERROR: DOOM1.WAD not found in assets/iwads/${NC}"
     echo ""
-    echo "  Run ./get-assets.sh to download it automatically, or place DOOM1.WAD"
-    echo "  manually in assets/iwads/  (id Software shareware, freely redistributable)."
+    echo "  DOOM1.WAD ships with this repository. Run scripts/get-assets.sh to restore it"
+    echo "  from git, or re-clone the repository."
     echo "============================================================================"
     echo ""
     exit 1
 fi
 echo "      OK"
 echo ""
+
+if ! docker info >/dev/null 2>&1; then
+    echo -e "${RED}ERROR: Docker is not installed or the Docker daemon is not running.${NC}"
+    exit 1
+fi
+
+# Recreating the container destroys everything in it — confirm first.
+if docker inspect "$CONTAINER_NAME" >/dev/null 2>&1 && [ "$ASSUME_YES" != "true" ]; then
+    echo -e "${YELLOW}WARNING: Container '$CONTAINER_NAME' already exists. It will be DELETED and${NC}"
+    echo -e "${YELLOW}recreated, and all gateway data in it (projects, tags, config) will be lost.${NC}"
+    if [ -t 0 ]; then
+        read -rp "Type the container name to continue: " CONFIRM
+    else
+        CONFIRM=""
+    fi
+    if [ "$CONFIRM" != "$CONTAINER_NAME" ]; then
+        echo "Aborted. (Use -y to skip this prompt.)"
+        exit 1
+    fi
+    echo ""
+fi
 
 # Step 1: Stop and remove existing container
 echo "[1/7] Stopping and removing existing container..."
@@ -97,16 +136,10 @@ fi
 
 # Step 5: Create asset directories and deploy assets
 echo ""
-echo "[5/7] Creating asset directories and deploying assets..."
-docker exec "$CONTAINER_NAME" bash -c \
-    "mkdir -p $CONTAINER_WAD_PATH/soundfonts $CONTAINER_WAD_PATH/branding" || {
-    echo -e "      ${RED}ERROR: Failed to create asset directories${NC}"
-    exit 1
-}
-echo "      Directories created."
-echo "      Running deploy-assets.sh to copy WADs, soundfonts, and branding..."
+echo "[5/7] Deploying assets..."
+echo "      Running deploy-assets.sh to copy WADs, soundfonts, branding, and PWADs..."
 echo ""
-bash "$(dirname "$0")/deploy-assets.sh" "$CONTAINER_NAME" || echo -e "      ${YELLOW}WARNING: Asset deployment reported errors - check output above.${NC}"
+bash scripts/deploy-assets.sh "$CONTAINER_NAME" || echo -e "      ${YELLOW}WARNING: Asset deployment reported errors - check output above.${NC}"
 
 # Step 6: Enable unsigned modules and set heap memory
 echo ""
@@ -149,14 +182,14 @@ echo "==========================================================================
 echo "  Setup Complete!"
 echo "============================================================================"
 echo "  Installed WAD files:"
-docker exec "$CONTAINER_NAME" bash -c "ls -lh $CONTAINER_WAD_PATH/iwads/*.WAD $CONTAINER_WAD_PATH/iwads/*.wad 2>/dev/null || echo '  (none found)'"
+docker exec "$CONTAINER_NAME" bash -c "cd $CONTAINER_WAD_PATH/iwads 2>/dev/null && ls -lh | grep -i '\.wad\$' || echo '  (none found)'"
 echo ""
 echo "  Gateway URL:    http://localhost:$IGNITION_PORT"
 echo "  Landing page:   http://localhost:$IGNITION_PORT/system/doom"
 echo "  Health check:   http://localhost:$IGNITION_PORT/system/doom/health"
 echo ""
 echo "  To add or refresh assets later (without recreating the container):"
-echo "    bash deploy-assets.sh $CONTAINER_NAME"
+echo "    scripts/deploy-assets.sh $CONTAINER_NAME"
 echo ""
 echo "  Next steps:"
 echo "    1. Commission the gateway (EULA, auth, activation)"
