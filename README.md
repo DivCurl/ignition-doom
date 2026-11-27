@@ -45,6 +45,7 @@ This project sprouted suddenly and quite humbly into life while pondering over g
 | Community WAD verification | In progress | Several vanilla-compatible PWADs verified |
 | Ignition 2027.x support | Experimental | Runs on 2027.2.0-beta2; compiling against the 2027 SDK is still to do |
 | In-game "Aim & Mouse" menu, so mouselook and the crosshair can change mid-game | Planned | The options are set on the start page for now |
+| Deathmatch drop-in rejoin: let a player who left (or a new one) join a match under way | Idea | Players are fixed once a match starts, as in vanilla and the source ports; rejoining needs the new engine to replay the match so far |
 | MIDI quality: SoundFont selection closer to the original score | Planned | |
 | Ignition 8.1 support | On hold | Needs `javax` servlets and a Jetty 9.4 WebSocket rewrite |
 

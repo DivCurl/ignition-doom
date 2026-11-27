@@ -749,11 +749,15 @@ public class DoomInputServlet extends HttpServlet {
      */
     private void streamMatchSoundEvents(MatchSession match, String browserSid,
                                         HttpServletResponse resp) throws IOException {
+        int mySlot = browserSid != null ? match.getSlot(browserSid) : -1;
+        if (mySlot < 0) return;
+        // Wait up to 60 s for this player's engine. (Not for every engine: after another
+        // player leaves, the match is no longer fully running, but this player still is.)
         long deadline = System.currentTimeMillis() + 60_000;
-        while (!match.isFullyRunning() && match.isAlive() && System.currentTimeMillis() < deadline) {
+        while (!match.isPlayerRunning(mySlot) && match.isAlive() && System.currentTimeMillis() < deadline) {
             try { Thread.sleep(200); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
         }
-        if (!match.isFullyRunning()) return;
+        if (!match.isPlayerRunning(mySlot)) return;
 
         DoomSession slotSession = match.getSlotSession(browserSid);
         if (slotSession == null) return;
@@ -768,7 +772,7 @@ public class DoomInputServlet extends HttpServlet {
         MusicStateDTO lastSentMusic = null;
         long lastPingMs = 0;
 
-        while (match.isFullyRunning()) {
+        while (match.isPlayerRunning(mySlot)) {
             boolean wrote = false;
 
             SoundEventDTO[] events = slotSession.pollSoundEvents();
@@ -1091,6 +1095,7 @@ public class DoomInputServlet extends HttpServlet {
         } else if (path.contains("/status")) {
             MatchSession match = resolveRunningMatch(req, resp);
             if (match == null) return;
+            match.touchPlayer(req.getParameter("session"));   // the page polls this: a heartbeat
             serveMatchStatus(match, resp);
         } else if (path.contains("/sounds/")) {
             String soundName = path.substring(path.lastIndexOf("/sounds/") + "/sounds/".length());
@@ -1358,8 +1363,25 @@ public class DoomInputServlet extends HttpServlet {
         if (slot < 0) {
             resp.setStatus(409);
             resp.setContentType("text/html; charset=UTF-8");
-            resp.getWriter().write(buildErrorPage("Match full",
-                "All " + match.getNumPlayers() + " player slots are taken for this match."));
+            if (match.getLeftCount() > 0 || match.isLive()) {
+                // Like vanilla and the source ports, a netgame's players are fixed once it starts.
+                resp.getWriter().write(buildErrorPage("Match in progress",
+                    "This match is already under way"
+                    + (match.getLeftCount() > 0 ? " and " + match.getLeftCount() + " player(s) have left it" : "")
+                    + ". A match can't be joined or rejoined once it has started: start a new match from the dashboard."));
+            } else {
+                resp.getWriter().write(buildErrorPage("Match full",
+                    "All " + match.getNumPlayers() + " player slots are taken for this match."));
+            }
+            return;
+        }
+        if (match.hasLeft(slot)) {
+            // Same browser tab coming back after leaving: its engine is gone.
+            resp.setStatus(409);
+            resp.setContentType("text/html; charset=UTF-8");
+            resp.getWriter().write(buildErrorPage("You left this match",
+                "You left this match, and a match can't be rejoined once it has started. "
+                + "Start a new match from the dashboard."));
             return;
         }
 
@@ -1470,12 +1492,13 @@ public class DoomInputServlet extends HttpServlet {
                                    HttpServletResponse resp) throws IOException {
         int slot = browserSid != null ? match.getSlot(browserSid) : 0;
         if (slot < 0) slot = 0;
-        // Wait up to 60 s for all engines to start before opening the stream
+        // Wait up to 60 s for this player's engine. (Not for every engine: after another
+        // player leaves, the match is no longer fully running, but this player still is.)
         long deadline = System.currentTimeMillis() + 60_000;
-        while (!match.isFullyRunning() && match.isAlive() && System.currentTimeMillis() < deadline) {
+        while (!match.isPlayerRunning(slot) && match.isAlive() && System.currentTimeMillis() < deadline) {
             try { Thread.sleep(200); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
         }
-        if (!match.isFullyRunning()) return;
+        if (!match.isPlayerRunning(slot)) return;
         resp.setContentType("multipart/x-mixed-replace; boundary=" + MJPEG_BOUNDARY);
         resp.setHeader("Cache-Control", "no-cache");
         resp.setHeader("Connection", "close");
@@ -1488,7 +1511,7 @@ public class DoomInputServlet extends HttpServlet {
         long lastQualityChangeMs = System.currentTimeMillis();
         boolean firstFrame = true;
         DoomSession slotSession = match.getSlotSessionByIndex(slot);
-        while (match.isFullyRunning()) {
+        while (match.isPlayerRunning(slot)) {
             try {
                 byte[] frame = match.waitForNextFrame(slot, seq, 2000);
                 if (frame == null) continue;
@@ -1532,8 +1555,9 @@ public class DoomInputServlet extends HttpServlet {
     private void serveMatchStatus(MatchSession match, HttpServletResponse resp)
             throws IOException {
         String json = "{"
-            + "\"running\":"  + match.isFullyRunning()  + ","
+            + "\"running\":"  + match.isLive()  + ","
             + "\"players\":"  + match.getNumPlayers() + ","
+            + "\"left\":"     + match.getLeftCount() + ","
             + "\"joined\":"   + match.getJoinedCount() + ","
             + "\"matchId\":\"" + escapeJson(match.getMatchId()) + "\","
             + "\"wad\":\""    + escapeJson(match.getWadName()) + "\""

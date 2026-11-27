@@ -60,22 +60,22 @@ public class MouselookEngineIT {
         }
     }
 
-    private static ISessionRunner newRunner() throws Exception {
+    static ISessionRunner newRunner() throws Exception {
         URL engineClasses = SessionRunner.class.getProtectionDomain().getCodeSource().getLocation();
         ClassLoader cl = new EngineClassLoader(new URL[]{ engineClasses }, MouselookEngineIT.class.getClassLoader());
         return (ISessionRunner) cl.loadClass("com.doom.headless.SessionRunner").getDeclaredConstructor().newInstance();
     }
 
-    private static String newConfigDir(String prefix) throws Exception {
+    static String newConfigDir(String prefix) throws Exception {
         return Files.createTempDirectory(prefix).toString() + File.separator;
     }
 
-    private static String wadPath() throws Exception {
+    static String wadPath() throws Exception {
         assumeTrue("DOOM1.WAD not found at " + WAD.getAbsolutePath(), WAD.isFile());
         return WAD.getCanonicalPath();   // native separators: the engine rejects C:/ paths on Windows
     }
 
-    private static Object get(Object o, String name) throws Exception {
+    static Object get(Object o, String name) throws Exception {
         for (Class<?> c = o.getClass(); c != null; c = c.getSuperclass()) {
             try {
                 Field f = c.getDeclaredField(name);
@@ -88,20 +88,20 @@ public class MouselookEngineIT {
         throw new NoSuchFieldException(name);
     }
 
-    private static Object player(ISessionRunner r, int i) throws Exception {
+    static Object player(ISessionRunner r, int i) throws Exception {
         return ((Object[]) get(get(r, "doomMain"), "players"))[i];
     }
 
-    private static int lookdir(ISessionRunner r, int i) throws Exception {
+    static int lookdir(ISessionRunner r, int i) throws Exception {
         return (Integer) get(player(r, i), "lookdir");
     }
 
-    private static int gametic(ISessionRunner r) throws Exception {
+    static int gametic(ISessionRunner r) throws Exception {
         return (Integer) get(get(r, "doomMain"), "gametic");
     }
 
     /** Waits until the engine has run {@code n} more game tics (35 per second). */
-    private static void waitTics(ISessionRunner r, int n) throws Exception {
+    static void waitTics(ISessionRunner r, int n) throws Exception {
         int target = gametic(r) + n;
         long deadline = System.currentTimeMillis() + 20_000;
         while (gametic(r) < target && System.currentTimeMillis() < deadline) {

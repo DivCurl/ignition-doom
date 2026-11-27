@@ -323,7 +323,8 @@ public class SessionManager {
     /** Returns the total number of active engine instances (single-player + matches). */
     public long countActiveEngines() {
         long sp = sessions.values().stream().filter(DoomSession::isRunning).count();
-        long mp = matches.values().stream().filter(MatchSession::isFullyRunning).count();
+        // One engine per player still in a match (previously a whole match counted as one).
+        long mp = matches.values().stream().mapToLong(MatchSession::countRunningEngines).sum();
         return sp + mp;
     }
 
@@ -472,6 +473,8 @@ public class SessionManager {
             json.append("\"wad\":\"").append(esc(m.getWadName())).append("\",");
             json.append("\"players\":").append(m.getNumPlayers()).append(",");
             json.append("\"joined\":").append(m.getJoinedCount()).append(",");
+            json.append("\"running\":").append(m.isLive()).append(",");
+            json.append("\"left\":").append(m.getLeftCount()).append(",");
             json.append("\"idleMs\":").append(m.getIdleMs()).append(",");
             json.append("\"uptimeMs\":").append(m.getUptimeMs());
             json.append("}");
@@ -594,9 +597,9 @@ public class SessionManager {
             if (wadPath.equals(s.getWadPath()) && s.isRunning()) return s;
         }
         for (MatchSession m : matches.values()) {
-            if (wadPath.equals(m.getWadPath()) && m.isFullyRunning()) {
-                DoomSession eng = m.getEngineSession();
-                if (eng != null && eng.isRunning()) return eng;
+            if (wadPath.equals(m.getWadPath())) {
+                DoomSession eng = m.anyRunningEngine();
+                if (eng != null) return eng;
             }
         }
         return null;

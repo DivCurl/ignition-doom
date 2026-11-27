@@ -51,17 +51,34 @@ public class TikcmdBus {
     // storedTic[slot][idx] = absolute tic stored at ring[slot][idx]. -1 = no data yet.
     private final int[][] storedTic;
 
-    // disconnected[slot] = true when that player's session ended
+    // disconnected[slot] = true once that player has left the match
     private final boolean[] disconnected;
+
+    // lastPublished[slot] = highest tic the slot has published (-1 = none yet)
+    private final int[] lastPublished;
+
+    // leftAfterTic[slot] = the slot's last real tic when it left; later tics read as PLAYER_LEFT
+    private final int[] leftAfterTic;
+
+    /**
+     * Returned by {@link #get} (compare by identity) for every tic after a player's
+     * last one once they have left. Each remaining engine sees it at the same tic, so
+     * all of them drop the player at the same point and stay in lockstep.
+     */
+    public static final byte[] PLAYER_LEFT = new byte[0];
 
     private volatile boolean closed = false;
     private final Object lock = new Object();
 
     public TikcmdBus(int numPlayers) {
-        this.numPlayers   = numPlayers;
-        this.ring         = new byte[numPlayers][RING_SIZE][TIKCMD_BYTES];
-        this.storedTic    = new int[numPlayers][RING_SIZE];
-        this.disconnected = new boolean[numPlayers];
+        this.numPlayers    = numPlayers;
+        this.ring          = new byte[numPlayers][RING_SIZE][TIKCMD_BYTES];
+        this.storedTic     = new int[numPlayers][RING_SIZE];
+        this.disconnected  = new boolean[numPlayers];
+        this.lastPublished = new int[numPlayers];
+        this.leftAfterTic  = new int[numPlayers];
+        Arrays.fill(lastPublished, -1);
+        Arrays.fill(leftAfterTic, -1);
         for (int s = 0; s < numPlayers; s++) {
             Arrays.fill(storedTic[s], -1);   // -1 = no data yet
         }
@@ -72,25 +89,25 @@ public class TikcmdBus {
         if (closed) return;
         int idx = tic & (RING_SIZE - 1);
         synchronized (lock) {
+            if (disconnected[slot]) return;   // left the match: later input is ignored
             System.arraycopy(bytes, 0, ring[slot][idx], 0, TIKCMD_BYTES);
             storedTic[slot][idx] = tic;     // mark this exact tic as available
+            if (tic > lastPublished[slot]) lastPublished[slot] = tic;
             lock.notifyAll();
         }
     }
 
     /**
      * Blocking read — waits until the tikcmd for (slot, tic) arrives.
-     * Returns null on timeout or if the bus was closed.
+     * Returns {@link #PLAYER_LEFT} for tics after a departed player's last one, and
+     * null on timeout or if the bus was closed (never blank commands: those would
+     * fail DOOM's consistency check).
      */
     public byte[] get(int slot, int tic, long timeoutMs) throws InterruptedException {
-        // disconnected players auto-yield empty tikcmds so other engines don't freeze
-        if (disconnected[slot]) {
-            return new byte[TIKCMD_BYTES];
-        }
         int idx = tic & (RING_SIZE - 1);
         long deadline = System.currentTimeMillis() + timeoutMs;
         synchronized (lock) {
-            while (storedTic[slot][idx] != tic && !closed && !disconnected[slot]) {
+            while (storedTic[slot][idx] != tic && !closed && !hasLeftBefore(slot, tic)) {
                 long remaining = deadline - System.currentTimeMillis();
                 if (remaining <= 0) {
                     return null;
@@ -103,18 +120,37 @@ public class TikcmdBus {
                 }
                 lock.wait(remaining);
             }
-            if (closed || disconnected[slot]) return new byte[TIKCMD_BYTES];
+            if (closed) return null;
+            if (hasLeftBefore(slot, tic)) return PLAYER_LEFT;
             byte[] result = new byte[TIKCMD_BYTES];
             System.arraycopy(ring[slot][idx], 0, result, 0, TIKCMD_BYTES);
             return result;
         }
     }
 
-    /** Marks slot as disconnected — future get() calls return empty tikcmds so other engines keep running. */
+    /** True if the slot left the match and {@code tic} comes after its last real one. Holds {@code lock}. */
+    private boolean hasLeftBefore(int slot, int tic) {
+        return disconnected[slot] && tic > leftAfterTic[slot];
+    }
+
+    /**
+     * Marks the slot as having left. Its tics up to the last one it published are still
+     * delivered (other engines may not have read them yet); every later tic reads as
+     * {@link #PLAYER_LEFT}. Further publishes from the slot are ignored. Idempotent.
+     */
     public void playerDisconnected(int slot) {
         synchronized (lock) {
+            if (disconnected[slot]) return;
             disconnected[slot] = true;
+            leftAfterTic[slot] = lastPublished[slot];
             lock.notifyAll();
+        }
+    }
+
+    /** True once the slot has left the match. */
+    public boolean isDisconnected(int slot) {
+        synchronized (lock) {
+            return disconnected[slot];
         }
     }
 

@@ -84,13 +84,170 @@ public class MatchSession {
     private volatile boolean stopped        = false;
     private final long createTimeMs = System.currentTimeMillis();
 
+    // ── Player departure ──────────────────────────────────────────────────────
+    /**
+     * How long a player's browser may be gone (tab closed, network lost) before they
+     * are taken out of the match. Long enough to survive a page reload.
+     */
+    static final long LEAVE_GRACE_MS = 15_000;
+
+    /** slot → its engine has reached the running state at least once */
+    private final boolean[] slotWasRunning;
+    /** slot → departure already reported to the TikcmdBus */
+    private final boolean[] slotLeft;
+    /** browser session → open WebSocket count (a reload briefly has two) */
+    private final ConcurrentHashMap<String, Integer> openSockets = new ConcurrentHashMap<>();
+    /** browser session → last HTTP sign of life (status poll, input POST) */
+    private final ConcurrentHashMap<String, Long> lastSeenMs = new ConcurrentHashMap<>();
+
     public MatchSession(String matchId, String wadPath, int numPlayers, URL rendererJarUrl) {
         this.matchId        = matchId;
         this.wadPath        = wadPath;
         this.numPlayers     = Math.max(2, Math.min(4, numPlayers));
         this.rendererJarUrl = rendererJarUrl;
         this.browserBySlot  = new String[this.numPlayers];
+        this.slotWasRunning = new boolean[this.numPlayers];
+        this.slotLeft       = new boolean[this.numPlayers];
         logger.info("MatchSession created: matchId={}, wad={}, slots={}", matchId, wadPath, numPlayers);
+    }
+
+    /** A player's WebSocket opened. */
+    public void socketOpened(String browserSessionId) {
+        if (browserSessionId == null) return;
+        openSockets.merge(browserSessionId, 1, Integer::sum);
+        touchPlayer(browserSessionId);
+    }
+
+    /** A player's WebSocket closed; they count as gone after {@link #LEAVE_GRACE_MS} without a new one. */
+    public void socketClosed(String browserSessionId) {
+        if (browserSessionId == null) return;
+        openSockets.computeIfPresent(browserSessionId, (k, n) -> n > 1 ? n - 1 : null);
+        touchPlayer(browserSessionId);
+    }
+
+    /** Any sign of life from a player's page (status poll, input POST). */
+    public void touchPlayer(String browserSessionId) {
+        if (browserSessionId != null && slotByBrowser.containsKey(browserSessionId)) {
+            lastSeenMs.put(browserSessionId, System.currentTimeMillis());
+        }
+    }
+
+    private boolean browserPresent(int slot, long now) {
+        String b = browserBySlot[slot];
+        if (b == null) return false;
+        if (openSockets.getOrDefault(b, 0) > 0) return true;
+        Long seen = lastSeenMs.get(b);
+        return seen != null && now - seen < LEAVE_GRACE_MS;
+    }
+
+    /** True if the player in this slot has left the match. */
+    public boolean hasLeft(int slot) {
+        synchronized (slotLeft) {
+            return slot >= 0 && slot < slotLeft.length && slotLeft[slot];
+        }
+    }
+
+    /** Number of players who have left the match. */
+    public int getLeftCount() {
+        int n = 0;
+        synchronized (slotLeft) {
+            for (boolean l : slotLeft) if (l) n++;
+        }
+        return n;
+    }
+
+    /**
+     * True while this player's own engine is running. Streams to a player depend on
+     * this, not on {@link #isFullyRunning()}: after someone else leaves, the match is
+     * no longer "fully" running but the remaining players are still playing.
+     */
+    public boolean isPlayerRunning(int slot) {
+        if (stopped) return false;
+        DoomSession e = getSlotSessionByIndex(slot);
+        return e != null && e.isRunning();
+    }
+
+    /** Number of this match's engines currently running (one per player still in the game). */
+    public int countRunningEngines() {
+        if (stopped || engines == null) return 0;
+        int n = 0;
+        for (DoomSession e : engines) {
+            if (e != null && e.isRunning()) n++;
+        }
+        return n;
+    }
+
+    /** Any running engine of this match, or null. */
+    public DoomSession anyRunningEngine() {
+        DoomSession[] eng = engines;
+        if (stopped || eng == null) return null;
+        for (DoomSession e : eng) {
+            if (e != null && e.isRunning()) return e;
+        }
+        return null;
+    }
+
+    /** True while the match is under way: engines started, not stopped, someone still playing. */
+    public boolean isLive() {
+        if (stopped || engines == null) return false;
+        for (DoomSession e : engines) {
+            if (e != null && e.isRunning()) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Watches each player's engine and browser. A player leaves when their engine
+     * stops (End Game, Quit, error) or their browser has been gone for
+     * {@link #LEAVE_GRACE_MS}. The departure goes to the TikcmdBus, which lets every
+     * remaining engine drop that player at the same tic instead of waiting forever.
+     */
+    private void monitorPlayers() {
+        while (!stopped) {
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                return;
+            }
+            DoomSession[] eng = engines;
+            if (eng == null) continue;
+            long now = System.currentTimeMillis();
+            for (int s = 0; s < eng.length; s++) {
+                DoomSession e = eng[s];
+                if (e == null || slotLeft[s]) continue;
+                if (e.isRunning()) {
+                    if (!slotWasRunning[s]) {
+                        slotWasRunning[s] = true;
+                        // Engines start in parallel and may take a while: count presence from now.
+                        String b = browserBySlot[s];
+                        if (b != null) lastSeenMs.put(b, now);
+                    } else if (!browserPresent(s, now)) {
+                        playerLeft(s, "browser gone for " + (LEAVE_GRACE_MS / 1000) + " s");
+                    }
+                } else if (slotWasRunning[s]) {
+                    playerLeft(s, "engine stopped (End Game, Quit or error)");
+                }
+            }
+            if (getLeftCount() >= numPlayers) {
+                logger.info("Match {}: every player has left — stopping", matchId);
+                stop();
+            }
+        }
+    }
+
+    private void playerLeft(int slot, String reason) {
+        synchronized (slotLeft) {
+            if (slotLeft[slot]) return;
+            slotLeft[slot] = true;
+        }
+        logger.info("Match {}: player {} left ({})", matchId, slot + 1, reason);
+        TikcmdBus b = bus;
+        if (b != null) b.playerDisconnected(slot);
+        DoomSession e = engines != null ? engines[slot] : null;
+        if (e != null) {
+            try { e.stop(); }
+            catch (Exception ex) { logger.warn("Error stopping engine of departed player {} in {}", slot + 1, matchId, ex); }
+        }
     }
 
     /** Stores game params. Engines don't start until all slots fill via assignSlot(). */
@@ -162,6 +319,10 @@ public class MatchSession {
             t.setDaemon(true);
             t.start();
         }
+
+        Thread monitor = new Thread(this::monitorPlayers, "DOOM-Match-" + matchId + "-Players");
+        monitor.setDaemon(true);
+        monitor.start();
     }
 
     /** Returns true if all N engines exist and are running. */
@@ -311,8 +472,13 @@ public class MatchSession {
 
     // ── Delegated helpers ─────────────────────────────────────────────────────
 
-    /** Returns engine[0] for sound cache bootstrapping. Null until engines start. */
+    /**
+     * A representative engine (sound cache, WAD checks): a running one if any, since
+     * player 1 may have left; otherwise engine[0]. Null until engines start.
+     */
     DoomSession getEngineSession() {
+        DoomSession running = anyRunningEngine();
+        if (running != null) return running;
         DoomSession[] eng = engines;
         return eng != null && eng.length > 0 ? eng[0] : null;
     }

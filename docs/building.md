@@ -12,7 +12,7 @@ How to build, package, sign and test the module. To install and run a finished `
 - [Package the .modl](#package-the-modl)
 - [Signing the module (recommended)](#signing-the-module-recommended)
 - [Testing Ignition versions](#testing-ignition-versions)
-- [Engine integration test](#engine-integration-test)
+- [Engine integration tests](#engine-integration-tests)
 
 ---
 
@@ -193,17 +193,20 @@ Git Bash. Run the script with `--help` for all options.
 
 ---
 
-## Engine integration test
+## Engine integration tests
 
-`MouselookEngineIT` runs real engines (no gateway needed) with the shareware `DOOM1.WAD` from
-`assets/iwads/`. It checks mouselook (pitch, look limits, centring), turning, wheel weapon
-changes and firing in single-player, and that two deathmatch engines stay in sync, including
-that no mouse movement is lost while one engine waits for the other.
+These run real engines (no gateway needed) with the shareware `DOOM1.WAD` from `assets/iwads/`:
 
-It is not part of the normal build (`mvn package` runs only the fast unit tests). Build first,
-then run it on its own; it takes about 20 seconds:
+- `MouselookEngineIT` checks mouselook (pitch, look limits, centring), turning, wheel weapon
+  changes and firing in single-player, and that two deathmatch engines stay in sync, including
+  that no mouse movement is lost while one engine waits for the other.
+- `DeathmatchLeaveIT` checks that when a player leaves a 2- or 3-player match, the others keep
+  playing, drop that player at the same tic, stay in sync, and see "Player N left the game".
+
+They are not part of the normal build (`mvn package` runs only the fast unit tests). Build
+first, then run them on their own; together they take under a minute:
 
 ```bash
 cd ignition-module && mvn install -DskipTests
-cd ../headless-renderer && mvn test -Dtest=MouselookEngineIT
+cd ../headless-renderer && mvn test -Dtest='MouselookEngineIT,DeathmatchLeaveIT'
 ```

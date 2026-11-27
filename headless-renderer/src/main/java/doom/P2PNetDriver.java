@@ -144,7 +144,14 @@ public class P2PNetDriver<T, V> implements DoomSystemNetworking, NetConsts {
                 int tic = dm.nettics[n];
                 try {
                     byte[] bytes = bus.get(n, tic, 1); // 1 ms: spin-friendly, wakes on notifyAll
-                    if (bytes != null) {
+                    if (bytes == TikcmdBus.PLAYER_LEFT) {
+                        // The player left after their previous tic. The marker is always
+                        // available, so don't run more than half the command buffer ahead
+                        // of the game: that would overwrite commands not yet run.
+                        if (tic >= dm.gametic + data.Defines.BACKUPTICS / 2) continue;
+                        dm.netcmds[n][tic % data.Defines.BACKUPTICS].markPlayerLeft();
+                        dm.nettics[n]++;
+                    } else if (bytes != null) {
                         dm.netcmds[n][tic % data.Defines.BACKUPTICS].unpackP2P(bytes);
                         dm.nettics[n]++;
                     }

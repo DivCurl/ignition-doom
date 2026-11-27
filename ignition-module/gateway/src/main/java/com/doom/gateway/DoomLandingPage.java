@@ -145,6 +145,7 @@ public class DoomLandingPage {
             + ".join-link { background: #003300; color: #88ee88; border: 1px solid #006600; padding: 4px 12px; text-decoration: none; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; white-space: nowrap; }\n"
             + ".join-link:hover { background: #004400; color: #aaffaa; }\n"
             + ".join-link.full { background: #1a1a1a; color: #555; border-color: #333; pointer-events: none; }\n"
+            + ".cell-players .left { color: #ff8844; margin-left: 6px; }\n"
 
             // Footer
             + ".footer { border-top: 1px solid #1a1a1a; padding-top: 14px; margin-top: 8px; }\n"
@@ -592,12 +593,12 @@ public class DoomLandingPage {
             + "    var isFull=(m.joined>=m.players)||m.running;\n"
             + "    var joinUrl='/system/doom/match/join?match='+encodeURIComponent(m.id)+'&wad='+encodeURIComponent(m.wad||'');\n"
             + "    var statusEl=m.running?\"<span class='cell-status-running'>&#9679; Running</span>\":\"<span class='cell-status-lobby'>&#9675; Lobby</span>\";\n"
-            + "    var joinEl=isFull?\"<a class='join-link full'>Full</a>\":\"<a class='join-link' href='\"+joinUrl+\"' target='_blank'>Join</a>\";\n"
+            + "    var joinEl=isFull?\"<a class='join-link full'>\"+(m.running?'In progress':'Full')+\"</a>\":\"<a class='join-link' href='\"+joinUrl+\"' target='_blank'>Join</a>\";\n"
             + "    var pJoined=isFull?\"<span class='joined'>\"+m.joined+\"</span>\":\"<span class='waiting'>\"+m.joined+\"</span>\";\n"
             + "    return \"<tr>\"\n"
             + "      +\"<td class='cell-id' onclick='copyId(this,\\\"\"+esc(m.id)+\"\\\")' title='Click to copy'>\"+esc(m.id)+\"<span class='copied-flash'>Copied!</span></td>\"\n"
             + "      +\"<td class='cell-wad'>\"+esc(m.wad||'\\u2014')+\"</td>\"\n"
-            + "      +\"<td class='cell-players'>\"+pJoined+\" / \"+m.players+\"</td>\"\n"
+            + "      +\"<td class='cell-players'>\"+pJoined+\" / \"+m.players+(m.left?\"<span class='left'>(\"+m.left+\" left)</span>\":\"\")+\"</td>\"\n"
             + "      +\"<td class='cell-time'>\"+fmtMs(m.uptimeMs)+\"</td>\"\n"
             + "      +\"<td>\"+statusEl+\"</td>\"\n"
             + "      +\"<td>\"+joinEl+ownerEndButton('match',m.id)+\"</td>\"\n"

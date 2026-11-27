@@ -1499,6 +1499,13 @@ public class DoomMain<T, V> extends DoomStatus<T, V> implements IDoomGameNetwork
                 //memcpy (cmd, &netcmds[i][buf], sizeof(ticcmd_t));
                 netcmds[i][buf].copyTo(cmd);
 
+                // Deathmatch: this player left. Drop them the way vanilla handles
+                // NCMD_EXIT, but at this exact tic so every engine does it together.
+                if (cmd.playerLeft) {
+                    PlayerLeftGame(i);
+                    continue;
+                }
+
                 // MAES: this is where actual demo commands are being issued or created!
                 // Essentially, a demo is a sequence of stored ticcmd_t with a header.
                 // Knowing that, it's possible to objectify it.
@@ -3498,6 +3505,23 @@ public class DoomMain<T, V> extends DoomStatus<T, V> implements IDoomGameNetwork
     ////    GetPackets
 
     StringBuilder exitmsg=new StringBuilder(80);
+
+    /**
+     * A deathmatch player left (see ticcmd_t.playerLeft). Same effect as vanilla's
+     * NCMD_EXIT handling in GetPackets: the player is out of the game (their body
+     * stays where it is), their node stops being waited for, and everyone else
+     * sees "Player N left the game".
+     */
+    void PlayerLeftGame(int player) {
+        playeringame[player] = false;
+        nodeingame[nodeforplayer[player]] = false;
+        if (player != consoleplayer) {
+            players[consoleplayer].message = "Player " + (player + 1) + " left the game";
+        }
+        if (demorecording) {
+            CheckDemoStatus();
+        }
+    }
 
     public void GetPackets() {
         int netconsole;

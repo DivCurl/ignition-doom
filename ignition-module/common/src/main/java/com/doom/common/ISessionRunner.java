@@ -87,6 +87,12 @@ public interface ISessionRunner {
     /** Total frames rendered so far. */
     int getFrameNumber();
 
+    /**
+     * The engine's game tic (35 per second while the game runs), or -1 if unknown.
+     * Unlike the frame count, it stops while a deathmatch engine waits for its peers.
+     */
+    default int getGameTic() { return -1; }
+
     // ── Input ────────────────────────────────────────────────────────────────
 
     /** Updates the pressed key set. Servlet thread writes, game loop reads at 35 Hz. */

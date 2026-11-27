@@ -318,6 +318,13 @@ public class SessionRunner implements ISessionRunner {
         return frameCounter.get();
     }
 
+    @Override
+    @SuppressWarnings("unchecked")
+    public int getGameTic() {
+        Object dm = doomMain;
+        return dm == null ? -1 : ((doom.DoomMain<byte[], byte[]>) dm).gametic;
+    }
+
     // ── ISessionRunner: Input ────────────────────────────────────────────────
 
     @Override

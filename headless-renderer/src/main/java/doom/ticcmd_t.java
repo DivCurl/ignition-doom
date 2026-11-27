@@ -49,7 +49,27 @@ public class ticcmd_t implements IDatagramSerializable, IReadableDoomObject,Cach
      * {@link #packP2P}/{@link #unpackP2P}.
      */
     public short lookdelta;
-    
+
+    /**
+     * Deathmatch: this player left the match before this tic (vanilla's NCMD_EXIT,
+     * delivered in the command stream so every engine acts on it at the same tic).
+     * Never serialized; set by P2PNetDriver from TikcmdBus.PLAYER_LEFT.
+     */
+    public boolean playerLeft;
+
+    /** Turns this into an empty "player left" command. */
+    public void markPlayerLeft() {
+        forwardmove = 0;
+        sidemove = 0;
+        angleturn = 0;
+        consistancy = 0;
+        chatchar = 0;
+        buttons = 0;
+        lookfly = 0;
+        lookdelta = 0;
+        playerLeft = true;
+    }
+
     // TODO: will be ignored during vanilla demos. Consider using specialized
     // per-demotype readers instead of Cacheable/Unpackage.
 
@@ -82,6 +102,7 @@ public class ticcmd_t implements IDatagramSerializable, IReadableDoomObject,Cach
          dest.buttons= buttons;
          dest.lookfly=lookfly;
          dest.lookdelta=lookdelta;
+         dest.playerLeft=playerLeft;
      }
      
      private static StringBuilder sb=new StringBuilder();
@@ -227,6 +248,7 @@ public class ticcmd_t implements IDatagramSerializable, IReadableDoomObject,Cach
         unpack(buf, 0);
         lookfly   = (char) (0x00FF & buf[8]);
         lookdelta = (short) ((buf[9] & 0xFF) << 8 | (buf[10] & 0xFF));
+        playerLeft = false;
     }
     
 };

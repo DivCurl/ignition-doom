@@ -128,6 +128,11 @@ public class DoomWebSocketServlet extends JettyWebSocketServlet {
         public void onOpen(Session session) {
             this.wsSession = session;
             log.debug("WS open: session={} match={}", sessionId, matchId);
+            MatchSession match = currentMatch();
+            if (match != null) {
+                match.socketOpened(sessionId);   // presence: an open socket means the player is here
+                countedInMatch = true;
+            }
 
             pushThread = new Thread(this::pushLoop, "DOOM-WSPush-" + sessionId);
             pushThread.setDaemon(true);
@@ -171,6 +176,7 @@ public class DoomWebSocketServlet extends JettyWebSocketServlet {
                 session.addMouseInput(0, 0, 0, 0);   // release any held mouse buttons
             }
             if (pushThread != null) pushThread.interrupt();
+            leaveMatchPresence();
             log.debug("WS close: session={} status={}", sessionId, statusCode);
         }
 
@@ -178,10 +184,34 @@ public class DoomWebSocketServlet extends JettyWebSocketServlet {
         public void onError(Throwable cause) {
             closed = true;
             if (pushThread != null) pushThread.interrupt();
+            leaveMatchPresence();
             log.debug("WS error: session={} cause={}", sessionId, cause.getMessage());
         }
 
+        /** True while this socket is counted as the player's presence in their match. */
+        private boolean countedInMatch = false;
+
+        /** Close and error can both fire: count the socket out once. */
+        private synchronized void leaveMatchPresence() {
+            if (!countedInMatch) return;
+            countedInMatch = false;
+            MatchSession match = currentMatch();
+            if (match != null) match.socketClosed(sessionId);
+        }
+
+        private MatchSession currentMatch() {
+            if (matchId == null || sessionId == null) return null;
+            SessionManager sm = GatewayHook.getSessionManager();
+            return sm != null ? sm.getMatch(matchId) : null;
+        }
+
         // ── Push loop ─────────────────────────────────────────────────────────
+
+        /** Game tic seen last, when it last changed, and whether "stall:1" is showing. */
+        private int lastTic = Integer.MIN_VALUE;
+        private long lastTicChangeMs = System.currentTimeMillis();
+        private boolean stallSent = false;
+        private static final long STALL_NOTICE_MS = 2000;
 
         private void pushLoop() {
             MusicStateDTO lastSentMusic = null;
@@ -218,6 +248,21 @@ public class DoomWebSocketServlet extends JettyWebSocketServlet {
                     if (q != lastSentQuality) {
                         lastSentQuality = q;
                         sendText("quality:" + Math.round(q * 100));
+                    }
+
+                    // Deathmatch: tell the page when the game stops advancing (waiting on
+                    // another player), so a stall never looks like a frozen engine.
+                    if (matchId != null) {
+                        int tic = session.getGameTic();
+                        long now = System.currentTimeMillis();
+                        if (tic != lastTic) {
+                            lastTic = tic;
+                            lastTicChangeMs = now;
+                            if (stallSent) { sendText("stall:0"); stallSent = false; }
+                        } else if (!stallSent && now - lastTicChangeMs > STALL_NOTICE_MS) {
+                            sendText("stall:1");
+                            stallSent = true;
+                        }
                     }
 
                     Thread.sleep(10);

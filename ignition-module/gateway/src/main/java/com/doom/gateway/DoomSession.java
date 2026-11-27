@@ -291,6 +291,14 @@ public class DoomSession {
         catch (Exception e) { return 0; }
     }
 
+    /** The engine's game tic, or -1 if unknown. */
+    public int getGameTic() {
+        ISessionRunner r = runner;
+        if (r == null) return -1;
+        try { return r.getGameTic(); }
+        catch (Exception e) { return -1; }
+    }
+
     public void updatePressedKeys(Set<Integer> keys) {
         if (runner == null) return;
         try { runner.updatePressedKeys(keys); }
