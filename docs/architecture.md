@@ -18,7 +18,7 @@ and where everything lives in the repository.
 Browser
   └─ GET /system/doom/frame/stream   ← MJPEG push stream (server pushes PNG or JPEG frames as rendered)
   └─ WS  /system/doom-ws             ← primary: input + sound/music events (bidirectional)
-  └─ POST /system/doom/input         ← fallback: keyboard state (JS keyCodes)
+  └─ POST /system/doom/input         ← fallback: keyboard state, mouse, options (same messages as the WS)
   └─ GET /system/doom/events/stream  ← fallback: SSE sound/music events
 
 Gateway (Ignition Module)
@@ -31,7 +31,7 @@ Gateway (Ignition Module)
 
 Engine (per session, child ClassLoader)
   └─ Mocha DOOM                      ← pure-Java DOOM engine (35 tics/sec, headless)
-  └─ P2PNetDriver                    ← exchanges 8-byte tikcmds with peer engines
+  └─ P2PNetDriver                    ← exchanges 11-byte tikcmds with peer engines
   └─ HeadlessSoundDriver             ← origin-tracked sound events
   └─ HeadlessMusicDriver             ← MUS→MIDI conversion
   └─ FrameEncoder                    ← palette→RGB→PNG/JPEG, dedicated encoder thread
@@ -39,7 +39,7 @@ Engine (per session, child ClassLoader)
 
 **ClassLoader isolation** — each browser session gets a child-first `SessionClassLoader` that loads `headless-renderer.jar`, isolating all Mocha DOOM statics per session.
 
-**P2P multiplayer** — each player gets their own independent DOOM engine. Engines exchange 8-byte serialized tikcmds via `TikcmdBus` (a ring buffer in `common.jar`). DOOM's deterministic simulation keeps all engines in lockstep — identical tikcmd sequences produce identical game state.
+**P2P multiplayer** — each player gets their own independent DOOM engine. Engines exchange 11-byte serialized tikcmds (the vanilla 8 bytes plus the look fields) via `TikcmdBus` (a ring buffer in `common.jar`). DOOM's deterministic simulation keeps all engines in lockstep — identical tikcmd sequences produce identical game state.
 
 ---
 
@@ -66,11 +66,13 @@ Engine (per session, child ClassLoader)
 
 **Session cap** — `SessionManager` caps the number of running engines across single-player games and deathmatch players combined (default 8, set from 1 to 64 under **Max concurrent games** in Admin Settings and saved across restarts). A request over the cap returns HTTP 503.
 
-**Multiplayer (P2P tikcmd-sync)** — each player gets their own independent DOOM engine (`DoomSession`) running on its own thread. Engines share a `TikcmdBus` ring buffer (`common.jar`, parent classloader) and exchange 8-byte serialized tikcmds each game tic via `P2PNetDriver`. DOOM's deterministic simulation keeps all engines in lockstep. Each browser naturally gets the correct POV, HUD, sound, and music. Engines start in parallel background threads once all player slots are filled; browsers poll `/match/status` during the lobby.
+**Multiplayer (P2P tikcmd-sync)** — each player gets their own independent DOOM engine (`DoomSession`) running on its own thread. Engines share a `TikcmdBus` ring buffer (`common.jar`, parent classloader) and exchange 11-byte serialized tikcmds each game tic via `P2PNetDriver`: the vanilla 8 bytes plus `lookfly` and the mouselook pitch change `lookdelta`, so every engine applies the same vertical aim. The vanilla 8-byte format is unchanged for demos. DOOM's deterministic simulation keeps all engines in lockstep. Each browser naturally gets the correct POV, HUD, sound, and music. Engines start in parallel background threads once all player slots are filled; browsers poll `/match/status` during the lobby.
 
 **MJPEG push streaming** — frames served via `GET /system/doom/frame/stream?session=UUID` as a `multipart/x-mixed-replace` stream. The server holds the response open and pushes each encoded frame (PNG by default, or JPEG) as it's rendered, decoupling frame rate from browser round-trip time. No memory tags, no polling.
 
 **WebSocket transport** — input keycodes and audio events (sound + music) are exchanged over a single bidirectional WebSocket (`/system/doom-ws`), eliminating SSE/POST round-trip overhead. The browser falls back to SSE + POST if the WebSocket handshake fails.
+
+**Mouse and mouselook** — `static/mouse.js` captures the mouse with the Pointer Lock API and sends `m:dx,dy,buttons,wheel` messages (parsed by `InputMessages`, the same over WebSocket and POST). `SessionRunner` adds movement up and posts one mouse event per tic. With mouselook on, `BuildTiccmd` turns vertical movement into `ticcmd_t.lookdelta` (Crispy Doom style, 8 mouse units per look unit) and `player_t` clamps `lookdir` to -110..90; the renderer's existing y-shearing does the rest. Mouselook and autoaim are `GameplayOptions` fixed at launch (match rules in a deathmatch, since autoaim changes the simulation); the crosshair is display-only and can change at any time. The wheel uses Chocolate Doom's next/previous weapon logic, which needs no network change.
 
 **Self-hosted audio** — all assets served from the Ignition gateway. `soundfont-player.min.js` bundled in `gateway.jar`. Instrument JS files on the gateway filesystem under `user-lib/doom/soundfonts/`. Zero external network dependencies — works air-gapped.
 

@@ -17,7 +17,12 @@ public class DoomLandingPage {
     /** Short hash of static/owner.js, used as a cache-busting query parameter. */
     private static final String OWNER_JS_VERSION = resourceHash("/static/owner.js");
 
-    private static String resourceHash(String resource) {
+    private static String escHtml(String s) {
+        return s == null ? "" : s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    /** CRC32 of a bundled resource, used as a cache-busting query parameter. */
+    static String resourceHash(String resource) {
         try (java.io.InputStream in = DoomLandingPage.class.getResourceAsStream(resource)) {
             if (in == null) return "0";
             java.util.zip.CRC32 crc = new java.util.zip.CRC32();
@@ -70,8 +75,9 @@ public class DoomLandingPage {
             + ".stats-bar .sep { margin: 0 10px; color: #444; }\n"
             + ".stat-engines.full .used { color: #ff4444; }\n"
             + ".stat-links { margin-left: auto; display: flex; gap: 14px; }\n"
-            + ".stat-link { color: #9a9a9a; font-size: 12px; text-decoration: none; letter-spacing: 1px; text-transform: uppercase; }\n"
-            + ".stat-link:hover { color: #ddd; }\n"
+            + ".stat-link { color: #e8a33d; font-size: 12px; text-decoration: none; letter-spacing: 1px; text-transform: uppercase; }\n"
+            + ".stat-link:hover { color: #ffc266; text-decoration: underline; }\n"
+            + ".stat-ver { color: #9a9a9a; }\n"
 
             // Cap warning
             + ".cap-warning { background: #1a0a00; border: 1px solid #663300; color: #ff8844; padding: 9px 16px; font-size: 12px; margin-bottom: 18px; letter-spacing: 1px; }\n"
@@ -97,6 +103,14 @@ public class DoomLandingPage {
             + ".match-id-input:focus { border-color:#ff4444; }\n"
             + ".match-id-input::placeholder { color:#6e6e6e; text-transform:none; letter-spacing:0; }\n"
             + ".match-id-hint { font-size:12px; color:#9a9a9a; margin-top:4px; }\n"
+            + ".opt-row { display:flex; flex-wrap:wrap; gap:6px 20px; }\n"
+            + ".opt, .field label.opt { display:flex; align-items:center; gap:7px; color:#c8c8c8; font-size:13px; text-transform:none; letter-spacing:0; margin:0; cursor:pointer; }\n"
+            + ".opt input[type=checkbox] { accent-color:#cc0000; width:14px; height:14px; cursor:pointer; margin:0; }\n"
+            + ".mouse-strip { background:#111; border:1px solid #2a2a2a; padding:12px 22px; margin:-16px 0 32px 0; display:flex; flex-wrap:wrap; align-items:center; gap:10px 26px; }\n"
+            + ".ms-title { color:#ff4444; font-size:13px; font-weight:bold; text-transform:uppercase; letter-spacing:3px; }\n"
+            + ".mouse-strip input[type=range] { accent-color:#cc0000; width:130px; cursor:pointer; }\n"
+            + ".ms-val { color:#9a9a9a; font-size:12px; min-width:5ch; }\n"
+
             + ".detect-badge { display:none; align-items:center; gap:6px; margin-top:6px; padding:5px 10px; background:#1f0a0a; border:1px solid #5a1a1a; color:#cc7777; font-size:11px; letter-spacing:0.5px; }\n"
             + ".detect-badge.visible { display:inline-flex; }\n"
             + ".detect-badge .db-icon { color:#cc3333; }\n"
@@ -217,7 +231,12 @@ public class DoomLandingPage {
             + "Engines: <span class='used' id='usedEngines'>—</span><span style='color:#9a9a9a'> / <span id='maxEngines'>—</span></span></span>\n"
             + "  <span class='sep'>|</span>\n"
             + "  <span id='uptimeStat'>Uptime: —</span>\n"
+            + "  <span class='sep'>|</span>\n"
+            + "  <span class='stat-ver'>Ignition Build " +escHtml(GatewayHook.getIgnitionVersion()) + "</span>\n"
+            + "  <span class='sep'>|</span>\n"
+            + "  <span class='stat-ver'>DOOM Module Build " +escHtml(GatewayHook.getModuleVersion()) + "</span>\n"
             + "  <span class='stat-links'>\n"
+            + "    <a class='stat-link' href='/system/doom/controls' target='_blank' rel='noopener'>[Controls Help]</a>\n"
             + "    <a class='stat-link' href='#' id='settingsLink'>[Admin Settings]</a>\n"
             + "    <a class='stat-link' href='#' id='refreshLink'>[Refresh]</a>\n"
             + "  </span>\n"
@@ -247,6 +266,12 @@ public class DoomLandingPage {
             + "<option value='3'>4 \u2014 Ultra-Violence</option>"
             + "<option value='4'>5 \u2014 Nightmare!</option>"
             + "</select></div></div>\n"
+            + "    <div class='field'><label>Mouse &amp; Aim</label><div class='opt-row'>"
+            + "<label class='opt' title='Vertical mouse movement looks up and down (GZDoom-style freelook)'>"
+            + "<input type='checkbox' id='spMlook' checked> Mouselook</label>"
+            + "<label class='opt' title='Vanilla vertical autoaim. Off: shots go exactly where you look'>"
+            + "<input type='checkbox' id='spAutoaim' checked> Autoaim</label>"
+            + "</div></div>\n"
             + "    <button class='btn' id='spBtn' onclick='startSinglePlayer()'>&#9654; Start Game</button>\n"
             + "  </div>\n"
             + "  <div class='card' id='dmCard'>\n"
@@ -269,8 +294,22 @@ public class DoomLandingPage {
             + "    <div class='field'><label>Match ID <span style='color:#9a9a9a;font-size:11px;letter-spacing:1px'>(OPTIONAL)</span></label>"
             + "<input type='text' id='dmMatchId' class='match-id-input' placeholder='e.g. FRAGFEST  \u2014 leave blank to auto-generate' maxlength='12'>"
             + "<div class='match-id-hint'>3\u201312 letters / numbers \u00b7 shared with other players to join</div></div>\n"
+            + "    <div class='field'><label>Match Rules</label><div class='opt-row'>"
+            + "<label class='opt' title='Vertical mouse movement looks up and down (GZDoom-style freelook)'>"
+            + "<input type='checkbox' id='dmMlook' checked> Mouselook</label>"
+            + "<label class='opt' title='Vanilla vertical autoaim. Off: shots go exactly where you look'>"
+            + "<input type='checkbox' id='dmAutoaim' checked> Autoaim</label>"
+            + "</div><div class='match-id-hint'>Same for every player in the match</div></div>\n"
             + "    <button class='btn' id='dmBtn' onclick='createMatch()'>&#9760; Create Match</button>\n"
             + "  </div>\n"
+            + "</div>\n"
+            // ── Per-browser mouse settings (read by static/mouse.js on the play pages)
+            + "<div class='mouse-strip'>"
+            + "<span class='ms-title'>Mouse</span>"
+            + "<label class='opt'>Sensitivity <input type='range' id='msSens' min='0.25' max='4' step='0.25' value='1'>"
+            + "<span class='ms-val' id='msSensVal'>1.00x</span></label>"
+            + "<label class='opt'><input type='checkbox' id='msInvert'> Invert Y</label>"
+            + "<label class='opt'><input type='checkbox' id='msCross'> Crosshair</label>"
             + "</div>\n"
 
             // ── Active Sessions table
@@ -607,6 +646,7 @@ public class DoomLandingPage {
             + "  var url='/system/doom/play?wad='+encodeURIComponent(wad)+'&skill='+skill;\n"
             + "  if(mapVal) url+='&warp='+encodeURIComponent(mapVal);\n"
             + "  if(pwad) url+='&pwad='+encodeURIComponent(pwad);\n"
+            + "  url+=_optQuery('sp');\n"
             + "  if(_playToken) url+='&auth='+encodeURIComponent(_playToken);\n"
             + "  window.open(url,'_blank');\n"
             + "}\n"
@@ -625,12 +665,41 @@ public class DoomLandingPage {
             + "  if(mapVal) url+='&warp='+encodeURIComponent(mapVal);\n"
             + "  if(pwad) url+='&pwad='+encodeURIComponent(pwad);\n"
             + "  if(matchId) url+='&matchId='+encodeURIComponent(matchId);\n"
+            + "  url+=_optQuery('dm');\n"
             + "  if(_playToken) url+='&auth='+encodeURIComponent(_playToken);\n"
             + "  window.open(url,'_blank');\n"
             + "}\n"
 
             // ── Play password prompt: shown only when starting a game (single-player or
             //    creating a match) while a password is required. Joining a match needs no password.
+            // ── Mouse & aim options. Game options (mouselook/autoaim) go in the launch URL;
+            //    mouse settings stay in this browser for static/mouse.js. Both are remembered.
+            + "function _lsGet(k){ try{ return JSON.parse(localStorage.getItem(k)||'{}')||{}; }catch(e){ return {}; } }\n"
+            + "function _lsSet(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} }\n"
+            + "function _optQuery(p){\n"
+            + "  return '&mlook='+(document.getElementById(p+'Mlook').checked?1:0)\n"
+            + "       +'&autoaim='+(document.getElementById(p+'Autoaim').checked?1:0);\n"
+            + "}\n"
+            + "(function(){\n"
+            + "  var g=_lsGet('doomGameOpts');\n"
+            + "  ['sp','dm'].forEach(function(p){\n"
+            + "    var o=g[p]||{};\n"
+            + "    var ml=document.getElementById(p+'Mlook'), aa=document.getElementById(p+'Autoaim');\n"
+            + "    if(o.mlook===false) ml.checked=false;\n"
+            + "    if(o.autoaim===false) aa.checked=false;\n"
+            + "    function save(){ var a=_lsGet('doomGameOpts'); a[p]={mlook:ml.checked,autoaim:aa.checked}; _lsSet('doomGameOpts',a); }\n"
+            + "    ml.addEventListener('change',save); aa.addEventListener('change',save);\n"
+            + "  });\n"
+            + "  var m=_lsGet('doomMouse');\n"
+            + "  var sens=document.getElementById('msSens'), sv=document.getElementById('msSensVal');\n"
+            + "  var inv=document.getElementById('msInvert'), xh=document.getElementById('msCross');\n"
+            + "  if(parseFloat(m.sens)>0) sens.value=m.sens;\n"
+            + "  inv.checked=!!m.invert; xh.checked=!!m.crosshair;\n"
+            + "  function show(){ sv.textContent=parseFloat(sens.value).toFixed(2)+'x'; }\n"
+            + "  function save(){ show(); _lsSet('doomMouse',{sens:parseFloat(sens.value)||1,invert:inv.checked,crosshair:xh.checked}); }\n"
+            + "  show();\n"
+            + "  sens.addEventListener('input',save); inv.addEventListener('change',save); xh.addEventListener('change',save);\n"
+            + "})();\n"
             + "var _playToken=sessionStorage.getItem('doomPlayToken');\n"
             + "var _owner=false, _playRequired=false, _afterAuth=null;\n"
             + "function ownerEndButton(){ return ''; }\n"   // replaced by owner.js once it loads

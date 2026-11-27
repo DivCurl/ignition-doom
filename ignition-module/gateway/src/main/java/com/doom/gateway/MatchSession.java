@@ -17,6 +17,7 @@
 
 package com.doom.gateway;
 
+import com.doom.common.GameplayOptions;
 import com.doom.common.TikcmdBus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -54,6 +55,21 @@ public class MatchSession {
     public void setFrameFormat(String format) { this.frameFormat = format; }
 
     public void setPwadPath(String path) { this.pwadPath = path; }
+
+    /**
+     * Match rules chosen by the host (ZDoom "allow freelook" / "allow autoaim"
+     * style). They change the simulation, so every engine gets the same values.
+     */
+    private volatile GameplayOptions gameplayOptions = GameplayOptions.DEFAULTS;
+
+    public void setGameplayOptions(GameplayOptions options) {
+        if (options != null) this.gameplayOptions = options;
+    }
+
+    public GameplayOptions getGameplayOptions() { return gameplayOptions; }
+
+    /** Each player's crosshair choice (display only), kept until their engine exists. */
+    private final ConcurrentHashMap<String, Boolean> crosshairByBrowser = new ConcurrentHashMap<>();
 
     // N independent engines — one per player slot (null until startEngines() fires)
     private volatile DoomSession[]  engines = null;
@@ -133,6 +149,8 @@ public class MatchSession {
                 DoomSession engine = new DoomSession(engineId, wadPath, rendererJarUrl);
                 engine.setFrameFormat(frameFormat);
                 engine.setPwadPath(pwadPath);
+                engine.setGameplayOptions(gameplayOptions);
+                engine.setCrosshair(crosshairForSlot(s));
                 newEngines[s] = engine;
                 try {
                     engine.startP2P(startEp, startMap, skill, numPlayers, newBus, s);
@@ -243,6 +261,29 @@ public class MatchSession {
     public void updatePressedKeys(String browserSessionId, Set<Integer> keys) {
         DoomSession s = getSlotSession(browserSessionId);
         if (s != null) s.updatePressedKeys(keys);
+    }
+
+    /** Routes mouse input to the browser session's engine. */
+    public void addMouseInput(String browserSessionId, int dx, int dy, int buttons, int wheel) {
+        DoomSession s = getSlotSession(browserSessionId);
+        if (s != null) s.addMouseInput(dx, dy, buttons, wheel);
+    }
+
+    /** Sets a player's crosshair; remembered if their engine hasn't started yet. */
+    public void setCrosshair(String browserSessionId, boolean on) {
+        if (browserSessionId == null) return;
+        crosshairByBrowser.put(browserSessionId, on);
+        DoomSession s = getSlotSession(browserSessionId);
+        if (s != null) s.setCrosshair(on);
+    }
+
+    private boolean crosshairForSlot(int slot) {
+        for (java.util.Map.Entry<String, Integer> e : slotByBrowser.entrySet()) {
+            if (e.getValue() != null && e.getValue() == slot) {
+                return Boolean.TRUE.equals(crosshairByBrowser.get(e.getKey()));
+            }
+        }
+        return false;
     }
 
     /** Returns the player slot for a browser session, or -1 if not assigned. */

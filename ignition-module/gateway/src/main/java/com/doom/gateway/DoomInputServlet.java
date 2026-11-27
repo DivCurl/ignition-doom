@@ -17,6 +17,7 @@
 
 package com.doom.gateway;
 
+import com.doom.common.GameplayOptions;
 import com.doom.common.MusicStateDTO;
 import com.doom.common.SoundEventDTO;
 import jakarta.servlet.http.HttpServlet;
@@ -168,6 +169,11 @@ public class DoomInputServlet extends HttpServlet {
             if (session == null) return;
             serveFrame(session, resp);
 
+        } else if (path.endsWith("/controls")) {   // getPathInfo() includes the servlet name ("/doom/controls")
+            resp.setContentType("text/html; charset=UTF-8");
+            resp.setHeader("Cache-Control", "no-cache");
+            resp.getWriter().write(DoomControlsPage.getHTML());
+
         } else if (path.contains("play")) {
             servePlayPage(req, resp);
 
@@ -216,17 +222,11 @@ public class DoomInputServlet extends HttpServlet {
         } else {
             // Default: keyboard input. Sound events are delivered via WebSocket (/doom-ws), with SSE fallback.
             // POST /system/doom/input?session=UUID  →  200 OK (no body)
-            String body = new String(req.getInputStream().readAllBytes()).trim();
-            Set<Integer> currentKeys = new HashSet<>();
-            if (!body.isEmpty()) {
-                for (String s : body.split(",")) {
-                    try { currentKeys.add(Integer.parseInt(s.trim())); }
-                    catch (NumberFormatException ignored) {}
-                }
-            }
+            // Body: InputMessages lines (key list, m:mouse, opt:...).
+            String body = new String(req.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
             DoomSession session = resolveSession(req);
             if (session != null) {
-                session.updatePressedKeys(currentKeys);
+                InputMessages.dispatchAll(body, InputMessages.forSession(session));
             }
             resp.setStatus(HttpServletResponse.SC_OK);
         }
@@ -514,6 +514,7 @@ public class DoomInputServlet extends HttpServlet {
         String frameFormat = "jpeg".equalsIgnoreCase(req.getParameter("format")) ? "jpeg" : "png";
         int skill = parseIntParam(req, "skill", 2, 0, 4);
         if (wadName == null || wadName.trim().isEmpty()) wadName = SessionManager.DEFAULT_WAD;
+        GameplayOptions options = GameplayOptions.fromParams(req::getParameter);
 
         // Validate session ID format (UUID v4: 8-4-4-4-12)
         if (sessionId == null || !sessionId.matches(
@@ -521,7 +522,7 @@ public class DoomInputServlet extends HttpServlet {
             // Send back a page that generates a UUID and redirects to itself with it
             resp.setContentType("text/html; charset=UTF-8");
             resp.setHeader("Cache-Control", "no-cache");
-            resp.getWriter().write(buildSessionInitPage(wadName, frameFormat, pwadName, skill));
+            resp.getWriter().write(buildSessionInitPage(wadName, frameFormat, pwadName, skill, options));
             return;
         }
 
@@ -536,7 +537,7 @@ public class DoomInputServlet extends HttpServlet {
 
         DoomSession session;
         try {
-            session = sm.getOrCreate(sessionId, wadName, 0, 0, skill, frameFormat, pwadName);
+            session = sm.getOrCreate(sessionId, wadName, 0, 0, skill, frameFormat, pwadName, options);
         } catch (IllegalArgumentException e) {
             resp.setStatus(404);
             resp.setContentType("text/html; charset=UTF-8");
@@ -1179,21 +1180,15 @@ public class DoomInputServlet extends HttpServlet {
         } else {
             // Default: keyboard input. Sound events are delivered via WebSocket (/doom-ws), with SSE fallback.
             // POST /match/input?match=ID&session=UUID  →  200 OK (no body)
-            String body = new String(req.getInputStream().readAllBytes()).trim();
-            Set<Integer> currentKeys = new HashSet<>();
-            if (!body.isEmpty()) {
-                for (String s : body.split(",")) {
-                    try { currentKeys.add(Integer.parseInt(s.trim())); }
-                    catch (NumberFormatException ignored) {}
-                }
-            }
+            // Body: InputMessages lines (key list, m:mouse, opt:...).
+            String body = new String(req.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
             String matchId = req.getParameter("match");
             String sid     = req.getParameter("session");
             SessionManager sm = GatewayHook.getSessionManager();
             if (sm != null && matchId != null && sid != null) {
                 MatchSession match = sm.getMatch(matchId);
                 if (match != null) {
-                    match.updatePressedKeys(sid, currentKeys);
+                    InputMessages.dispatchAll(body, InputMessages.forMatchPlayer(match, sid));
                 }
             }
             resp.setStatus(HttpServletResponse.SC_OK);
@@ -1219,7 +1214,8 @@ public class DoomInputServlet extends HttpServlet {
             String fmtParam    = "jpeg".equalsIgnoreCase(req.getParameter("format")) ? "jpeg" : "";
             String pwadParam   = req.getParameter("pwad")    != null ? req.getParameter("pwad") : "";
             String midParam    = req.getParameter("matchId") != null ? req.getParameter("matchId") : "";
-            resp.getWriter().write(buildMatchInitPage(wadParam, plrParam, warpParam, sklParam, fmtParam, pwadParam, midParam));
+            GameplayOptions optParam = GameplayOptions.fromParams(req::getParameter);
+            resp.getWriter().write(buildMatchInitPage(wadParam, plrParam, warpParam, sklParam, fmtParam, pwadParam, midParam, optParam));
             return;
         }
 
@@ -1238,6 +1234,7 @@ public class DoomInputServlet extends HttpServlet {
         if (wadName == null || wadName.trim().isEmpty()) wadName = SessionManager.DEFAULT_WAD;
         int numPlayers   = parseIntParam(req, "players", 2, 2, 4);
         int skill        = parseIntParam(req, "skill",   2, 0, 4);
+        GameplayOptions options = GameplayOptions.fromParams(req::getParameter);
 
         // Parse warp param: "E,M" or "M"
         int startEp = 0, startMap = 0;
@@ -1280,7 +1277,7 @@ public class DoomInputServlet extends HttpServlet {
 
         MatchSession match;
         try {
-            match = sm.createMatch(matchId, wadName, numPlayers, startEp, startMap, skill, frameFormat, pwadName);
+            match = sm.createMatch(matchId, wadName, numPlayers, startEp, startMap, skill, frameFormat, pwadName, options);
         } catch (IllegalArgumentException e) {
             resp.setStatus(404);
             resp.setContentType("text/html; charset=UTF-8");
@@ -1369,7 +1366,8 @@ public class DoomInputServlet extends HttpServlet {
         resp.setContentType("text/html; charset=UTF-8");
         resp.setHeader("Cache-Control", "no-cache");
         resp.getWriter().write(DoomPlayPage.getMatchHTML(
-            matchId, sessionId, slot, match.getNumPlayers(), match.getWadName()));
+            matchId, sessionId, slot, match.getNumPlayers(), match.getWadName(),
+            match.getGameplayOptions()));
     }
 
     /** GET /match/frame?match=ID&session=UUID — serves this player's POV frame. */
@@ -1586,7 +1584,8 @@ public class DoomInputServlet extends HttpServlet {
 
     // ── Match HTML page builders ──────────────────────────────────────────────
 
-    private static String buildMatchInitPage(String wad, String players, String warp, String skill, String format, String pwad, String matchId) {
+    private static String buildMatchInitPage(String wad, String players, String warp, String skill, String format, String pwad, String matchId,
+                                             GameplayOptions options) {
         return "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
             + "<title>DOOM — Creating match...</title></head><body style='background:#1a1a1a;color:#0f0;font-family:monospace;padding:20px'>"
             + "<p>Initializing match...</p>"
@@ -1603,6 +1602,7 @@ public class DoomInputServlet extends HttpServlet {
             + (format.isEmpty()  ? "" : "+'&format='+"  + escapeJsString(format))
             + (pwad.isEmpty()    ? "" : "+'&pwad='+"    + escapeJsString(pwad))
             + (matchId.isEmpty() ? "" : "+'&matchId='+" + escapeJsString(matchId))
+            + "+'" + options.toQuery() + "'"
             + "+(auth?'&auth='+encodeURIComponent(auth):'')"
             + ");\n"
             + "</script></body></html>";
@@ -1692,7 +1692,8 @@ public class DoomInputServlet extends HttpServlet {
      * and redirects back to /play with it. This handles the first-visit case where
      * the browser doesn't have a session ID yet.
      */
-    private static String buildSessionInitPage(String wadName, String frameFormat, String pwadName, int skill) {
+    private static String buildSessionInitPage(String wadName, String frameFormat, String pwadName, int skill,
+                                               GameplayOptions options) {
         String fmtParam  = "jpeg".equals(frameFormat) ? "+'&format=jpeg'" : "";
         String pwadParam = (pwadName != null && !pwadName.isBlank())
             ? "+'&pwad='+encodeURIComponent(" + escapeJsString(pwadName) + ")" : "";
@@ -1710,7 +1711,9 @@ public class DoomInputServlet extends HttpServlet {
             + "sessionStorage.setItem('doomSessionId', sid);\n"
             + "var wad = " + escapeJsString(wadName) + ";\n"
             + "var auth = sessionStorage.getItem('doomPlayToken') || '';\n"
-            + "window.location.replace('/system/doom/play?session=' + sid + '&wad=' + encodeURIComponent(wad) + '&skill=" + skill + "'" + fmtParam + pwadParam + " + (auth ? '&auth=' + encodeURIComponent(auth) : ''));\n"
+            + "window.location.replace('/system/doom/play?session=' + sid + '&wad=' + encodeURIComponent(wad) + '&skill=" + skill + "'" + fmtParam + pwadParam
+            + " + '" + options.toQuery() + "'"
+            + " + (auth ? '&auth=' + encodeURIComponent(auth) : ''));\n"
             + "</script></body></html>";
     }
 

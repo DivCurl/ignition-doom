@@ -34,8 +34,11 @@ import java.util.Arrays;
  */
 public class TikcmdBus {
 
-    /** Serialized tikcmd size — matches ticcmd_t.TICCMDLEN */
-    public static final int TIKCMD_BYTES = 8;
+    /**
+     * Serialized tikcmd size — matches ticcmd_t.P2P_TICCMDLEN: the vanilla 8 bytes
+     * plus lookfly (1) and the mouselook pitch change lookdelta (2).
+     */
+    public static final int TIKCMD_BYTES = 11;
 
     // ring buffer depth — 256 gives ~7s of headroom at 35 Hz (BACKUPTICS = 12)
     private static final int RING_SIZE = 256;

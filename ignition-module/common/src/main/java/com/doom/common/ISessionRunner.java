@@ -55,6 +55,12 @@ public interface ISessionRunner {
     default void setPwadPath(String path) {}
 
     /**
+     * Mouselook / autoaim for this game. Call before start()/startP2P();
+     * every engine in a match must get the same options.
+     */
+    default void setGameplayOptions(GameplayOptions options) {}
+
+    /**
      * Sentinel value only: "" (no frame yet), "READY" (frame bytes available),
      * or "GAME_ENDED" (engine exited). Does NOT return a data URI.
      */
@@ -85,6 +91,19 @@ public interface ISessionRunner {
 
     /** Updates the pressed key set. Servlet thread writes, game loop reads at 35 Hz. */
     void updatePressedKeys(Set<Integer> pressedKeys);
+
+    /**
+     * Mouse input from the browser, added up until the next game tic.
+     *
+     * @param dx      horizontal movement, positive = right
+     * @param dy      vertical movement in DOOM's convention, positive = mouse pushed away (up)
+     * @param buttons current button state: 1 left, 2 right, 4 middle
+     * @param wheel   weapon steps from the wheel: positive = next weapon, negative = previous
+     */
+    default void addMouseInput(int dx, int dy, int buttons, int wheel) {}
+
+    /** Shows or hides the crosshair. Display only, so it can change at any time. */
+    default void setCrosshair(boolean on) {}
 
     // ── Game control ─────────────────────────────────────────────────────────
 

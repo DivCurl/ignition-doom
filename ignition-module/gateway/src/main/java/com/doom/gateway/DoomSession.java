@@ -17,6 +17,7 @@
 
 package com.doom.gateway;
 
+import com.doom.common.GameplayOptions;
 import com.doom.common.ISessionRunner;
 import com.doom.common.MusicStateDTO;
 import com.doom.common.SoundEventDTO;
@@ -68,6 +69,27 @@ public class DoomSession {
 
     public void setPwadPath(String path) { this.pwadPath = path; }
 
+    /** Mouselook / autoaim for this engine. Set before start(). */
+    private volatile GameplayOptions gameplayOptions = GameplayOptions.DEFAULTS;
+
+    /** Crosshair on/off. Display only, so it may change while running. */
+    private volatile boolean crosshair = false;
+
+    public void setGameplayOptions(GameplayOptions options) {
+        if (options != null) this.gameplayOptions = options;
+    }
+
+    public GameplayOptions getGameplayOptions() { return gameplayOptions; }
+
+    public void setCrosshair(boolean on) {
+        this.crosshair = on;
+        ISessionRunner r = runner;
+        if (r != null) {
+            try { r.setCrosshair(on); }
+            catch (Exception e) { logger.warn("setCrosshair error: {}", e.getMessage()); }
+        }
+    }
+
     /**
      * Latest music state drained from the runner but not yet served to the browser.
      * Non-null means the browser has not yet fetched the MIDI for this track change.
@@ -116,6 +138,8 @@ public class DoomSession {
             logger.info("SessionRunner instantiated for session {}", sessionId);
             runner.setFrameFormat(frameFormat);
             runner.setPwadPath(pwadPath);
+            runner.setGameplayOptions(gameplayOptions);
+            runner.setCrosshair(crosshair);
 
             // 3. Start the engine (blocks until init completes or 30s timeout)
             String configDir = "/tmp/doom-session-" + sessionId + "/";
@@ -273,6 +297,13 @@ public class DoomSession {
         catch (Exception e) { logger.warn("updatePressedKeys error: {}", e.getMessage()); }
     }
 
+    public void addMouseInput(int dx, int dy, int buttons, int wheel) {
+        ISessionRunner r = runner;
+        if (r == null) return;
+        try { r.addMouseInput(dx, dy, buttons, wheel); }
+        catch (Exception e) { logger.warn("addMouseInput error: {}", e.getMessage()); }
+    }
+
     // ── P2P multiplayer delegation (Phase 6.3) ───────────────────────────────
 
     /**
@@ -306,6 +337,8 @@ public class DoomSession {
             logger.info("SessionRunner instantiated for P2P session {}, slot={}", sessionId, playerSlot);
             runner.setFrameFormat(frameFormat);
             runner.setPwadPath(pwadPath);
+            runner.setGameplayOptions(gameplayOptions);
+            runner.setCrosshair(crosshair);
 
             String configDir = "/tmp/doom-session-" + sessionId + "/";
             runner.startP2P(wadPath, configDir, 640, 400, startEp, startMap, skill,

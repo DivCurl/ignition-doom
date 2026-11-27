@@ -143,24 +143,33 @@ public class DoomWebSocketServlet extends JettyWebSocketServlet {
                 return;
             }
 
-            Set<Integer> keys = new HashSet<>();
-            for (String part : message.split(",")) {
-                String p = part.trim();
-                if (!p.isEmpty()) {
-                    try { keys.add(Integer.parseInt(p)); }
-                    catch (NumberFormatException ignored) {}
-                }
-            }
+            InputMessages.Target target = resolveInputTarget();
+            if (target != null) InputMessages.dispatch(message, target);
+        }
 
-            DoomSession session = resolveSession();
-            if (session != null) session.updatePressedKeys(keys);
+        /**
+         * Where this socket's input goes. For a match this is the match itself, so a
+         * crosshair choice sent from the lobby is kept until the player's engine starts.
+         */
+        private InputMessages.Target resolveInputTarget() {
+            SessionManager sm = GatewayHook.getSessionManager();
+            if (sm == null || sessionId == null) return null;
+            if (matchId != null) {
+                MatchSession match = sm.getMatch(matchId);
+                return match != null ? InputMessages.forMatchPlayer(match, sessionId) : null;
+            }
+            DoomSession session = sm.getSession(sessionId);
+            return session != null ? InputMessages.forSession(session) : null;
         }
 
         @OnWebSocketClose
         public void onClose(int statusCode, String reason) {
             closed = true;
             DoomSession session = resolveSession();
-            if (session != null) session.updatePressedKeys(new HashSet<>());
+            if (session != null) {
+                session.updatePressedKeys(new HashSet<>());
+                session.addMouseInput(0, 0, 0, 0);   // release any held mouse buttons
+            }
             if (pushThread != null) pushThread.interrupt();
             log.debug("WS close: session={} status={}", sessionId, statusCode);
         }

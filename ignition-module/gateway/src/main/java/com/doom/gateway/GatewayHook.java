@@ -41,8 +41,14 @@ public class GatewayHook extends AbstractGatewayModuleHook {
     private static final Logger logger = LoggerFactory.getLogger("DOOM.GatewayHook");
 
     private static final String MODULE_VERSION = "1.0.0";
+    private static final String MODULE_ID = "com.doom.perspective";
 
     private GatewayContext gatewayContext;
+
+    /** For the version lookups below; set in setup(). */
+    private static volatile GatewayContext staticContext;
+    private static volatile String ignitionVersion;
+    private static volatile String moduleVersion;
     private static volatile SessionManager sessionManager;  // static for servlet access
 
     public GatewayHook() {
@@ -52,6 +58,57 @@ public class GatewayHook extends AbstractGatewayModuleHook {
     @Override
     public void setup(GatewayContext context) {
         this.gatewayContext = context;
+        staticContext = context;
+    }
+
+    /**
+     * Ignition platform version without the build timestamp, e.g. "8.3.1": the same call the
+     * gateway's own /system/gwinfo uses. "unknown" if this Ignition version doesn't offer it.
+     */
+    public static String getIgnitionVersion() {
+        String v = ignitionVersion;
+        if (v == null) {
+            try {
+                v = withoutBuild(com.inductiveautomation.ignition.common.BundleUtil.get().getPlatformVersion().toString());
+            } catch (Throwable t) {
+                v = "unknown";
+            }
+            ignitionVersion = v;
+        }
+        return v;
+    }
+
+    /**
+     * This module's installed version without the build timestamp, e.g. "1.0.0", from the
+     * gateway's module list; falls back to the version compiled in.
+     */
+    public static String getModuleVersion() {
+        String v = moduleVersion;
+        if (v == null) {
+            v = MODULE_VERSION;
+            try {
+                GatewayContext ctx = staticContext;
+                if (ctx != null) {
+                    for (com.inductiveautomation.ignition.common.modules.ModuleInfo mi
+                            : ctx.getModuleManager().getActiveModules()) {
+                        if (MODULE_ID.equals(mi.getId())) {
+                            v = withoutBuild(mi.getVersion().toString());
+                            moduleVersion = v;   // cache only a real lookup
+                            break;
+                        }
+                    }
+                }
+            } catch (Throwable t) {
+                // keep the compiled-in version
+            }
+        }
+        return v;
+    }
+
+    /** "8.3.1 (b2025102109)" becomes "8.3.1"; qualifiers such as "-rc1" before the build are kept. */
+    private static String withoutBuild(String version) {
+        int i = version.indexOf(" (");
+        return i > 0 ? version.substring(0, i) : version;
     }
 
     @Override

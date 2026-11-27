@@ -278,6 +278,9 @@ public class DoomMain<T, V> extends DoomStatus<T, V> implements IDoomGameNetwork
                         view.getScaledViewWidth(), view.getScaledViewHeight()), gametic % 256);
             }
             sceneRenderer.RenderPlayerView(players[displayplayer]);
+            if (crosshair) {
+                DrawCrosshair();
+            }
         }
 
         // Automap was active, update only HU.    
@@ -863,6 +866,26 @@ public class DoomMain<T, V> extends DoomStatus<T, V> implements IDoomGameNetwork
         }
     }
 
+    /**
+     * Static crosshair, as in Crispy Doom: the HUD font's '+' (STCFN043) drawn at
+     * the centre of the 3D view window (not the screen, so the status bar is
+     * accounted for). With y-shearing freelook this is where lookdir aims.
+     */
+    private void DrawCrosshair() {
+        final patch_t[] font = headsUp.getHUFonts();
+        final int idx = '+' - HU_FONTSTART;
+        if (font == null || idx < 0 || idx >= font.length || font[idx] == null) {
+            return;
+        }
+        final patch_t p = font[idx];
+        final int dupx = vs.getScalingX(), dupy = vs.getScalingY();
+        final int cx = view.getViewWindowX() + view.getScaledViewWidth() / 2;
+        final int cy = view.getViewWindowY() + view.getScaledViewHeight() / 2;
+        final int x = cx - (p.width * dupx) / 2 + p.leftoffset * dupx;
+        final int y = cy - (p.height * dupy) / 2 + p.topoffset * dupy;
+        graphicSystem.DrawPatchScaled(FG, p, vs, x, y, DoomGraphicSystem.V_NOSCALESTART);
+    }
+
     // Used in BuildTiccmd.
     protected ticcmd_t   base=new ticcmd_t();
 
@@ -977,17 +1000,14 @@ public class DoomMain<T, V> extends DoomStatus<T, V> implements IDoomGameNetwork
 
     	// Look up/down/center keys
     	if(gamekeydown[key_lookup]) {
-    		System.err.print("Look up\n");
     		look = lspeed;
     	}
     	
     	if(gamekeydown[key_lookdown]) {
-    		System.err.print("Look down\n");
     		look = -lspeed;
     	}
     	
     	if(gamekeydown[key_lookcenter]) {
-    		System.err.print("Center look\n");
     		look = TOCENTER;
     	}
     	
@@ -998,19 +1018,27 @@ public class DoomMain<T, V> extends DoomStatus<T, V> implements IDoomGameNetwork
             cmd.buttons |= BT_ATTACK; 
         }
 
-        if (gamekeydown[key_use] || joybuttons(joybuse)) { 
+        if (gamekeydown[key_use] || joybuttons(joybuse) || mousebuttons(mousebuse)) { 
             cmd.buttons |= BT_USE;
             // clear double clicks if hit use button 
             dclicks = 0;                   
         } 
 
-        // chainsaw overrides 
-        for (i = 0; i < NUMWEAPONS - 1; i++) {
-            if (gamekeydown[key_numbers[i]]) {
-                //System.out.println("Attempting weapon change (building ticcmd)");
-                cmd.buttons |= BT_CHANGE;
-                cmd.buttons |= i << BT_WEAPONSHIFT;
-                break;
+        // Next/previous weapon (mouse wheel), ported from Chocolate Doom.
+        final int weaponStep = nextWeaponRequest;
+        nextWeaponRequest = 0;
+        if (weaponStep != 0) {
+            cmd.buttons |= BT_CHANGE;
+            cmd.buttons |= NextWeapon(weaponStep) << BT_WEAPONSHIFT;
+        } else {
+            // chainsaw overrides 
+            for (i = 0; i < NUMWEAPONS - 1; i++) {
+                if (gamekeydown[key_numbers[i]]) {
+                    //System.out.println("Attempting weapon change (building ticcmd)");
+                    cmd.buttons |= BT_CHANGE;
+                    cmd.buttons |= i << BT_WEAPONSHIFT;
+                    break;
+                }
             }
         }
 
@@ -1060,8 +1088,18 @@ public class DoomMain<T, V> extends DoomStatus<T, V> implements IDoomGameNetwork
             }
         }
 
-        // By default, no vertical mouse movement
-        if (!novert) {
+        // Vertical mouse: mouselook turns it into pitch (Crispy Doom / GZDoom freelook);
+        // otherwise vanilla behaviour, where it moves the player forward and back.
+        if (mouselook) {
+            if (players[consoleplayer].playerstate == PST_LIVE) {
+                mouselookRemainder += mousey;
+                final int lookUnits = mouselookRemainder / MLOOKUNIT;
+                mouselookRemainder -= lookUnits * MLOOKUNIT;
+                cmd.lookdelta = (short) Math.max(-200, Math.min(200, lookUnits));
+            } else {
+                mouselookRemainder = 0;
+            }
+        } else if (!novert) {
             forward += mousey;
         }
 
@@ -2386,6 +2424,76 @@ public class DoomMain<T, V> extends DoomStatus<T, V> implements IDoomGameNetwork
         }
     }
 
+    /**
+     * Weapon cycling order for next/previous weapon, from Chocolate Doom's
+     * weapon_order_table. Each pair is {weapon, weapon number sent in the ticcmd}:
+     * the chainsaw and super shotgun have no slot of their own, so they are sent
+     * as the fist and shotgun slots and P_PlayerThink resolves them as usual.
+     */
+    private static final weapontype_t[][] WEAPON_ORDER = {
+        { weapontype_t.wp_fist,         weapontype_t.wp_fist },
+        { weapontype_t.wp_chainsaw,     weapontype_t.wp_fist },
+        { weapontype_t.wp_pistol,       weapontype_t.wp_pistol },
+        { weapontype_t.wp_shotgun,      weapontype_t.wp_shotgun },
+        { weapontype_t.wp_supershotgun, weapontype_t.wp_shotgun },
+        { weapontype_t.wp_chaingun,     weapontype_t.wp_chaingun },
+        { weapontype_t.wp_missile,      weapontype_t.wp_missile },
+        { weapontype_t.wp_plasma,       weapontype_t.wp_plasma },
+        { weapontype_t.wp_bfg,          weapontype_t.wp_bfg },
+    };
+
+    /** Chocolate Doom's WeaponSelectable(). */
+    private boolean WeaponSelectable(weapontype_t weapon) {
+        final player_t p = players[consoleplayer];
+        // Can't select the super shotgun in Doom 1.
+        if (weapon == weapontype_t.wp_supershotgun && !isCommercial()) {
+            return false;
+        }
+        // These weapons aren't available in shareware.
+        if ((weapon == weapontype_t.wp_plasma || weapon == weapontype_t.wp_bfg) && isShareware()) {
+            return false;
+        }
+        // Can't select a weapon if we don't own it.
+        if (!p.weaponowned[weapon.ordinal()]) {
+            return false;
+        }
+        // Can't select the fist if we have the chainsaw, unless we also have the berserk pack.
+        return !(weapon == weapontype_t.wp_fist
+            && p.weaponowned[weapontype_t.wp_chainsaw.ordinal()]
+            && p.powers[pw_strength] == 0);
+    }
+
+    /**
+     * Chocolate Doom's G_NextWeapon(): the weapon number to request when cycling
+     * one step in {@code direction} (+1 next, -1 previous) from the current or
+     * pending weapon. Uses the ordinary BT_CHANGE ticcmd, so it needs no changes
+     * to the network format.
+     */
+    private int NextWeapon(int direction) {
+        final player_t p = players[consoleplayer];
+        final weapontype_t weapon = p.pendingweapon == weapontype_t.wp_nochange
+            ? p.readyweapon : p.pendingweapon;
+
+        int i;
+        for (i = 0; i < WEAPON_ORDER.length; ++i) {
+            if (WEAPON_ORDER[i][0] == weapon) {
+                break;
+            }
+        }
+        if (i == WEAPON_ORDER.length) {
+            i = 0;
+        }
+
+        // Switch weapon. Don't loop forever.
+        final int start = i;
+        final int step = direction > 0 ? 1 : -1;
+        do {
+            i = (i + step + WEAPON_ORDER.length) % WEAPON_ORDER.length;
+        } while (i != start && !WeaponSelectable(WEAPON_ORDER[i][0]));
+
+        return WEAPON_ORDER[i][1].ordinal();
+    }
+
     //
     // DEMO RECORDING 
     // 
@@ -2401,6 +2509,10 @@ public class DoomMain<T, V> extends DoomStatus<T, V> implements IDoomGameNetwork
         }
 
         democmd.decode(cmd); 
+        // Vanilla demos have no look data. Clear what the live player's input
+        // left here, or looking around during a demo would change its outcome.
+        cmd.lookfly = 0;
+        cmd.lookdelta = 0;
     } 
 
     public void WriteDemoTiccmd(ticcmd_t cmd) {

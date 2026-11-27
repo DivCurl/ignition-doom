@@ -415,6 +415,36 @@ public abstract class DoomStatus<T,V> {
     public int mousebfire = 0;
     public int mousebstrafe = 2;	// AX: Fixed - Now we use the right mouse buttons
     public int mousebforward = 1;	// AX: Fixed - Now we use the right mouse buttons
+    /** Mouse button that acts as "use" (Chocolate Doom's mouseb_use); -1 = none. */
+    public int mousebuse = -1;
+
+    // ── Mouselook / aiming options (set per session by the host, see SessionRunner) ──
+
+    /**
+     * Mouselook (freelook): vertical mouse movement changes the view pitch
+     * instead of moving forward. Engine default is vanilla (off); the Ignition
+     * module turns it on by default, GZDoom-style.
+     */
+    public boolean mouselook = false;
+
+    /**
+     * Vanilla vertical autoaim for player attacks. When off, player shots follow
+     * lookdir exactly (Crispy Doom "direct" aiming). Changes the simulation, so
+     * every peer in a deathmatch must use the same value.
+     */
+    public boolean autoaim = true;
+
+    /** Draw a static crosshair at the centre of the 3D view (Crispy Doom style). */
+    public boolean crosshair = false;
+
+    /** Pending mouse-wheel weapon change for the next ticcmd: -1 previous, +1 next, 0 none. */
+    public volatile int nextWeaponRequest = 0;
+
+    /** Sub-unit vertical mouse movement carried between tics (MLOOKUNIT fractions). */
+    protected int mouselookRemainder = 0;
+
+    /** Mouse units per lookdir unit, as in Crispy Doom (keeps vertical and horizontal speed similar). */
+    protected static final int MLOOKUNIT = 8;
 
     public int joybfire;
 

@@ -41,6 +41,14 @@ public class ticcmd_t implements IDatagramSerializable, IReadableDoomObject,Cach
     
     /** HERETIC look/fly up/down/centering */    
     public char		lookfly; 
+
+    /**
+     * Mouselook: change to player_t.lookdir this tic, in lookdir units
+     * (same idea as Crispy Doom's ticcmd_t.lookdir). Not part of the vanilla
+     * 8-byte wire/demo format; carried between deathmatch peers by
+     * {@link #packP2P}/{@link #unpackP2P}.
+     */
+    public short lookdelta;
     
     // TODO: will be ignored during vanilla demos. Consider using specialized
     // per-demotype readers instead of Cacheable/Unpackage.
@@ -73,6 +81,7 @@ public class ticcmd_t implements IDatagramSerializable, IReadableDoomObject,Cach
          dest.chatchar= chatchar;
          dest.buttons= buttons;
          dest.lookfly=lookfly;
+         dest.lookdelta=lookdelta;
      }
      
      private static StringBuilder sb=new StringBuilder();
@@ -195,5 +204,29 @@ public class ticcmd_t implements IDatagramSerializable, IReadableDoomObject,Cach
     }
     
     private static ByteBuffer iobuffer=ByteBuffer.allocate(8);
+
+    /** Length of the P2P deathmatch format: vanilla 8 bytes + lookfly + lookdelta. */
+    public static final int P2P_TICCMDLEN = TICCMDLEN + 3;
+
+    /**
+     * Serializes this command for the P2P deathmatch bus. Unlike {@link #pack()},
+     * which keeps the original 8-byte vanilla layout, this also carries the
+     * look fields, so every peer applies the same vertical aim.
+     */
+    public byte[] packP2P() {
+        byte[] buf = new byte[P2P_TICCMDLEN];
+        pack(buf, 0);
+        buf[8]  = (byte) (lookfly & 0x00FF);
+        buf[9]  = (byte) (lookdelta >>> 8);
+        buf[10] = (byte) (lookdelta & 0x00FF);
+        return buf;
+    }
+
+    /** Inverse of {@link #packP2P()}. */
+    public void unpackP2P(byte[] buf) {
+        unpack(buf, 0);
+        lookfly   = (char) (0x00FF & buf[8]);
+        lookdelta = (short) ((buf[9] & 0xFF) << 8 | (buf[10] & 0xFF));
+    }
     
 };

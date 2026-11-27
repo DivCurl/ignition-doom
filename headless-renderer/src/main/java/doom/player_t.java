@@ -130,6 +130,9 @@ public class player_t /*extends mobj_t */ implements Cloneable, IReadableDoomObj
     // Heretic stuff
     public int flyheight;
     public int lookdir;
+
+    /** Look limits in lookdir units, as in Heretic and Crispy Doom. */
+    public static final int LOOKDIRMIN = 110, LOOKDIRMAX = 90;
     public boolean centering;
 
     /**
@@ -319,6 +322,12 @@ public class player_t /*extends mobj_t */ implements Cloneable, IReadableDoomObj
                     lookdir -= 5 * look;
                 }
             }
+        }
+
+        // Mouselook: apply this tic's pitch change, clamped to the Heretic /
+        // Crispy Doom range (LOOKDIRMIN 110 down, LOOKDIRMAX 90 up).
+        if (cmd.lookdelta != 0) {
+            lookdir = Math.max(-LOOKDIRMIN, Math.min(LOOKDIRMAX, lookdir + cmd.lookdelta));
         }
 
         // Centering is done over several tics

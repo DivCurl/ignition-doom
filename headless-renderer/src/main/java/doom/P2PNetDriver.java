@@ -128,8 +128,8 @@ public class P2PNetDriver<T, V> implements DoomSystemNetworking, NetConsts {
             // Publish all localcmds from (lastPublishedTic+1) to (maketic-1) to the bus.
             // localcmds[tic % BACKUPTICS] contains the consoleplayer's built tikcmds.
             for (int t = lastPublishedTic + 1; t < dm.maketic; t++) {
-                // pack() returns the internal buffer; bus.publish() copies it immediately.
-                bus.publish(playerSlot, t, dm.localcmds[t % data.Defines.BACKUPTICS].pack());
+                // packP2P() includes the look fields, so every peer sees our vertical aim.
+                bus.publish(playerSlot, t, dm.localcmds[t % data.Defines.BACKUPTICS].packP2P());
             }
             if (dm.maketic - 1 > lastPublishedTic) {
                 lastPublishedTic = dm.maketic - 1;
@@ -145,7 +145,7 @@ public class P2PNetDriver<T, V> implements DoomSystemNetworking, NetConsts {
                 try {
                     byte[] bytes = bus.get(n, tic, 1); // 1 ms: spin-friendly, wakes on notifyAll
                     if (bytes != null) {
-                        dm.netcmds[n][tic % data.Defines.BACKUPTICS].unpack(bytes);
+                        dm.netcmds[n][tic % data.Defines.BACKUPTICS].unpackP2P(bytes);
                         dm.nettics[n]++;
                     }
                     // else: null → remote engine hasn't published yet; TryRunTics will retry

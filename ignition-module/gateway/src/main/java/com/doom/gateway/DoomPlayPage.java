@@ -36,6 +36,15 @@ public class DoomPlayPage {
      * @param sessionId Server-assigned session UUID (injected into JS as SESSION_ID constant).
      * @param wadName   WAD name stem used by this session (e.g. "DOOM1", "DOOM2").
      */
+    /** Cache-busting version of static/mouse.js. */
+    private static final String MOUSE_JS_VERSION = DoomLandingPage.resourceHash("/static/mouse.js");
+
+    /** Link to the controls reference, opened in a new tab so the game keeps running. */
+    private static final String CONTROLS_HELP_LINK =
+        "<a href='/system/doom/controls' target='_blank' rel='noopener'>[Controls Help]</a>";
+
+    private static final String SEP = "<span class='hdr-sep'>|</span>";
+
     public static String getHTML(String sessionId, String wadName) {
         // Escape for safe embedding in a JS string literal
         String safeSession = sessionId.replace("'", "\\'");
@@ -54,10 +63,15 @@ public class DoomPlayPage {
             + "  display:flex; flex-direction:column;\n"
             + "}\n"
             + "#controls {\n"
-            + "  flex-shrink:0;\n"
-            + "  text-align:center; padding:8px 15px;\n"
-            + "  background:#222;\n"
+            + "  flex-shrink:0; display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:16px;\n"
+            + "  padding:6px 15px; background:#222; color:#999; font-size:14px;\n"
             + "}\n"
+            + ".hdr-left { text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }\n"
+            + ".hdr-right { text-align:right; white-space:nowrap; }\n"
+            + ".hdr-sep { color:#555; margin:0 6px; }\n"
+            // Same look as the dashboard's [Controls Help] link (.stat-link)
+            + "#controls a { color:#e8a33d; font-family:'Courier New', monospace; text-decoration:none; letter-spacing:1px; text-transform:uppercase; }\n"
+            + "#controls a:hover { color:#ffc266; text-decoration:underline; }\n"
             + "#game-container {\n"
             + "  flex:1; min-height:0;\n"
             + "  background:#000;\n"
@@ -76,12 +90,7 @@ public class DoomPlayPage {
             + "  image-rendering:-moz-crisp-edges;\n"
             + "  image-rendering:crisp-edges;\n"
             + "}\n"
-            + "#status {\n"
-            + "  flex-shrink:0;\n"
-            + "  padding:4px; font-size:12px; color:#888;\n"
-            + "  text-align:center; background:#1a1a1a;\n"
-            + "}\n"
-            + ".stat { display:inline-block; margin:0 10px; }\n"
+            + ".stat { display:inline-block; margin-left:14px; }\n"
             + "#latency { display:inline-block; min-width:4ch; text-align:right; }\n"
             + "#doomConsole {\n"
             + "  display:none; position:fixed; bottom:0; left:0; right:0;\n"
@@ -95,17 +104,16 @@ public class DoomPlayPage {
             + "</style>\n"
             + "</head><body>\n"
             + "<div id='controls'>\n"
-            + "  <strong style='color:#c0392b'>Controls:</strong> Arrow Keys = Move/Turn | Ctrl = Fire | Space = Use/Open | Esc = Menu | ~ = Console<br>\n"
-            + "  <small style='color:#888'><span style='color:#ddd'>" + escapeHtml(wadName) + "</span>"
-            + " | Session: <span id='sid' title='Click to copy' style='cursor:pointer;text-decoration:underline dotted'>"
-            + sessionId + "</span></small>\n"
+            + "  <div class='hdr-left'><span style='color:#ddd'>" + escapeHtml(wadName) + "</span>" + SEP
+            + "Session: <span id='sid' title='Click to copy' style='cursor:pointer;text-decoration:underline dotted'>"
+            + sessionId + "</span></div>\n"
+            + "  <div>" + CONTROLS_HELP_LINK + "</div>\n"
+            + "  <div class='hdr-right'>"
+            + "<span class='stat' id='qualityStat' style='display:none'>Quality: <span id='qualityPct' style='color:#ffaa00'>--</span>%</span>"
+            + "<span class='stat'>Latency: <span id='latency'>--</span> ms</span></div>\n"
             + "</div>\n"
             + "<div id='game-container' tabindex='0'>\n"
             + "  <img id='frame' alt='DOOM Frame'/>\n"
-            + "</div>\n"
-            + "<div id='status'>\n"
-            + "  <span class='stat'>Latency: <span id='latency'>--</span>ms</span>\n"
-            + "  <span class='stat' id='qualityStat' style='display:none'>Quality: <span id='qualityPct' style='color:#ffaa00'>--</span>%</span>\n"
             + "</div>\n"
             + "<div id='doomConsole'>\n"
             + "  <div id='consoleOut'></div>\n"
@@ -211,6 +219,16 @@ public class DoomPlayPage {
             + "    body: Object.keys(pressed).join(',')\n"
             + "  }).catch(function(){});\n"
             + "}\n"
+            // Hooks used by static/mouse.js
+            + "function _wsOpen() { return !!(_ws && _ws.readyState === 1); }\n"
+            + "function _canCapture() { return true; }\n"
+            + "function _sendInputLine(line) {\n"
+            + "  if (gameEnded) return;\n"
+            + "  if (_wsOpen()) { _ws.send(line); return; }\n"
+            + "  fetch('/system/doom/input?session=' + SESSION_ID, {\n"
+            + "    method:'POST', headers:{'Content-Type':'text/plain'}, body: line\n"
+            + "  }).catch(function(){});\n"
+            + "}\n"
             + "\n"
             // ── Keyboard events ─────────────────────────────────────────────────
             + "container.addEventListener('keydown', function(e) {\n"
@@ -265,6 +283,7 @@ public class DoomPlayPage {
             + "  _ws = new WebSocket(proto + '//' + location.host + '/system/doom-ws?session=' + SESSION_ID);\n"
             + "  _ws.onopen = function() {\n"
             + "    clearTimeout(_wsTimer); _wsOk = true;\n"
+            + "    if (window._sendOpts) _sendOpts();\n"
             + "    console.log('[DOOM] WS connected — using WebSocket transport');\n"
             + "    if (_evtSource) { _evtSource.onerror = null; _evtSource.close(); _evtSource = null; }\n"
             + "  };\n"
@@ -295,7 +314,7 @@ public class DoomPlayPage {
             + "    clearTimeout(_wsTimer); _ws = null;\n"
             + "    if (!gameEnded) {\n"
             + "      if (_wsOk) { _wsOk = false; console.log('[DOOM] WS dropped — reconnecting...'); setTimeout(_connectWS, 1000); }\n"
-            + "      else { console.warn('[DOOM] WS unavailable — falling back to SSE+POST'); if (!_evtSource) { _openEvents(); } }\n"
+            + "      else { console.warn('[DOOM] WS unavailable — falling back to SSE+POST'); if (!_evtSource) { _openEvents(); } if (window._sendOpts) _sendOpts(); }\n"
             + "    }\n"
             + "  };\n"
             + "  _ws.onerror = function() {};\n"
@@ -611,6 +630,7 @@ public class DoomPlayPage {
             + "frameImg.src = '/system/doom/frame/stream?session=' + SESSION_ID;\n"
             + "console.log('DOOM Player ready. Session: ' + SESSION_ID + ' WAD: ' + WAD_NAME);\n"
             + "</script>\n"
+            + "<script src='/system/doom/static/mouse.js?v=" + MOUSE_JS_VERSION + "'></script>\n"
             + "</body></html>";
     }
 
@@ -633,6 +653,18 @@ public class DoomPlayPage {
      */
     public static String getMatchHTML(String matchId, String sessionId,
                                       int slot, int numPlayers, String wadName) {
+        return getMatchHTML(matchId, sessionId, slot, numPlayers, wadName,
+                            com.doom.common.GameplayOptions.DEFAULTS);
+    }
+
+    /**
+     * @param rules the host's match rules (mouselook / autoaim), shown in the lobby and header
+     */
+    public static String getMatchHTML(String matchId, String sessionId,
+                                      int slot, int numPlayers, String wadName,
+                                      com.doom.common.GameplayOptions rules) {
+        String rulesText = "Mouselook " + (rules.isMouselook() ? "ON" : "OFF")
+                         + " &middot; Autoaim " + (rules.isAutoaim() ? "ON" : "OFF");
         String safeMatch   = matchId.replace("'", "\\'");
         String safeSession = sessionId.replace("'", "\\'");
         String safeWad     = wadName.replace("'", "\\'");
@@ -648,12 +680,20 @@ public class DoomPlayPage {
             + "* { margin:0; padding:0; box-sizing:border-box; }\n"
             + "html, body { width:100%; height:100%; overflow:hidden; }\n"
             + "body { background:#1a1a1a; color:#fff; font-family:monospace; font-size:14px; display:flex; flex-direction:column; }\n"
-            + "#controls { flex-shrink:0; text-align:center; padding:8px 15px; background:#222; }\n"
+            + "#controls {\n"
+            + "  flex-shrink:0; display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:16px;\n"
+            + "  padding:6px 15px; background:#222; color:#999; font-size:14px;\n"
+            + "}\n"
+            + ".hdr-left { text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }\n"
+            + ".hdr-right { text-align:right; white-space:nowrap; }\n"
+            + ".hdr-sep { color:#555; margin:0 6px; }\n"
+            // Same look as the dashboard's [Controls Help] link (.stat-link)
+            + "#controls a { color:#e8a33d; font-family:'Courier New', monospace; text-decoration:none; letter-spacing:1px; text-transform:uppercase; }\n"
+            + "#controls a:hover { color:#ffc266; text-decoration:underline; }\n"
             + "#game-container { flex:1; min-height:0; background:#000; position:relative; outline:none; }\n"
             + "#game-container:focus { outline: 3px solid #c0392b; cursor: none; }\n"
             + "#frame { width:100%; height:100%; object-fit:contain; object-position:center; image-rendering:pixelated; image-rendering:-moz-crisp-edges; image-rendering:crisp-edges; }\n"
-            + "#status { flex-shrink:0; padding:4px; font-size:12px; color:#888; text-align:center; background:#1a1a1a; }\n"
-            + ".stat { display:inline-block; margin:0 10px; }\n"
+            + ".stat { display:inline-block; margin-left:14px; }\n"
             + "#latency { display:inline-block; min-width:4ch; text-align:right; }\n"
             + "#matchStatus { color:#ffcc00; }\n"
             + "#doomConsole { display:none; position:fixed; bottom:0; left:0; right:0; background:rgba(0,0,0,0.88); color:#00ff00; font:14px monospace; padding:8px 12px; z-index:9999; border-top:2px solid #00ff00; }\n"
@@ -682,10 +722,16 @@ public class DoomPlayPage {
             + "</style>\n"
             + "</head><body>\n"
             + "<div id='controls'>\n"
-            + "  <strong style='color:#c0392b; letter-spacing:4px'>DEATHMATCH</strong> | Arrow Keys = Move/Turn | Ctrl = Fire | Space = Use | Esc = Menu | ~ = Console<br>\n"
-            + "  <small style='color:#888'><span style='color:#ddd'>" + escapeHtml(wadName) + "</span>"
-            + " | " + escapeHtml(playerLabel)
-            + " | Match: " + matchId + "</small>\n"
+            + "  <div class='hdr-left'><strong style='color:#c0392b; letter-spacing:4px'>DEATHMATCH</strong>" + SEP
+            + "<span style='color:#ddd'>" + escapeHtml(wadName) + "</span>" + SEP
+            + escapeHtml(playerLabel) + SEP
+            + "Match: " + matchId + SEP
+            + rulesText + "</div>\n"
+            + "  <div>" + CONTROLS_HELP_LINK + "</div>\n"
+            + "  <div class='hdr-right'>"
+            + "<span class='stat' id='matchStatus'>Connecting...</span>"
+            + "<span class='stat' id='qualityStat' style='display:none'>Quality: <span id='qualityPct' style='color:#ffaa00'>--</span>%</span>"
+            + "<span class='stat'>Latency: <span id='latency'>--</span> ms</span></div>\n"
             + "</div>\n"
             + "<div id='game-container' tabindex='0'>\n"
             + "  <img id='frame' alt='DOOM Frame'/>\n"
@@ -693,18 +739,14 @@ public class DoomPlayPage {
             + "  <div id='lobby-overlay'>\n"
             + "    <div id='lobby-title'>Deathmatch</div>\n"
             + "    <div id='lobby-count'>1 / " + numPlayers + " players joined</div>\n"
+            + "    <div id='lobby-rules' style='color:#aaa;font-size:13px;margin:-12px 0 22px 0'>Rules: " + rulesText + "</div>\n"
             + "    <div id='lobby-url-label'>Share this link with other players:</div>\n"
             + "    <input id='lobby-url' type='text' readonly/>\n"
             + "    <div id='lobby-copy-hint'>(click to copy)</div>\n"
             + "    <div id='lobby-copied'>Copied!</div>\n"
             + "  </div>\n"
             + "</div>\n"
-            + "<div id='status'>\n"
-            + "  <span class='stat'>Latency: <span id='latency'>--</span>ms</span>\n"
-            + "  <span class='stat' id='qualityStat' style='display:none'>Quality: <span id='qualityPct' style='color:#ffaa00'>--</span>%</span>\n"
-            + "  <span class='stat' id='matchStatus'>Connecting...</span>\n"
-            + "  <span class='stat' style='color:#9a9a9a'>" + escapeHtml(playerLabel) + "</span>\n"
-            + "</div>\n"
+
             + "<div id='doomConsole'>\n"
             + "  <div id='consoleOut'></div>\n"
             + "  <div class='con-row'><span>&gt;</span>\n"
@@ -825,6 +867,16 @@ public class DoomPlayPage {
             + "    body: Object.keys(pressed).join(',')\n"
             + "  }).catch(function(){});\n"
             + "}\n"
+            // Hooks used by static/mouse.js
+            + "function _wsOpen() { return !!(_ws && _ws.readyState === 1); }\n"
+            + "function _canCapture() { return streamStarted && (!lobbyOverlay || lobbyOverlay.classList.contains('hidden')); }\n"
+            + "function _sendInputLine(line) {\n"
+            + "  if (gameEnded) return;\n"
+            + "  if (_wsOpen()) { _ws.send(line); return; }\n"
+            + "  fetch('/system/doom/match/input' + _matchParams, {\n"
+            + "    method:'POST', headers:{'Content-Type':'text/plain'}, body: line\n"
+            + "  }).catch(function(){});\n"
+            + "}\n"
             + "container.addEventListener('keydown', function(e) {\n"
             + "  if (!audioContext) { initAudio(); } else if (audioContext.state === 'suspended') { audioContext.resume(); }\n"
             + "  if (e.key==='`' || e.keyCode===192) { e.preventDefault(); _consoleToggle(); return; }\n"
@@ -874,6 +926,7 @@ public class DoomPlayPage {
             + "  _ws = new WebSocket(proto + '//' + location.host + '/system/doom-ws' + _matchParams);\n"
             + "  _ws.onopen = function() {\n"
             + "    clearTimeout(_wsTimer); _wsOk = true;\n"
+            + "    if (window._sendOpts) _sendOpts();\n"
             + "    console.log('[DOOM] WS connected — using WebSocket transport');\n"
             + "    if (_evtSource) { _evtSource.onerror = null; _evtSource.close(); _evtSource = null; }\n"
             + "  };\n"
@@ -904,7 +957,7 @@ public class DoomPlayPage {
             + "    clearTimeout(_wsTimer); _ws = null;\n"
             + "    if (!gameEnded) {\n"
             + "      if (_wsOk) { _wsOk = false; console.log('[DOOM] WS dropped — reconnecting...'); setTimeout(_connectWS, 1000); }\n"
-            + "      else { console.warn('[DOOM] WS unavailable — falling back to SSE+POST'); if (!_evtSource) { _openEvents(); } }\n"
+            + "      else { console.warn('[DOOM] WS unavailable — falling back to SSE+POST'); if (!_evtSource) { _openEvents(); } if (window._sendOpts) _sendOpts(); }\n"
             + "    }\n"
             + "  };\n"
             + "  _ws.onerror = function() {};\n"
@@ -1217,6 +1270,7 @@ public class DoomPlayPage {
             + "pollMatchStatus();\n"
             + "console.log('DOOM Deathmatch ready. Match: ' + MATCH_ID + ' Slot: ' + PLAYER_SLOT);\n"
             + "</script>\n"
+            + "<script src='/system/doom/static/mouse.js?v=" + MOUSE_JS_VERSION + "'></script>\n"
             + "</body></html>";
     }
 

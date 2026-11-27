@@ -18,6 +18,7 @@
 package com.doom.headless;
 
 import com.doom.common.FrameData;
+import com.doom.common.GameplayOptions;
 import com.doom.common.ISessionRunner;
 import com.doom.common.MusicStateDTO;
 import com.doom.common.SoundEventDTO;
@@ -79,6 +80,20 @@ public class SessionRunner implements ISessionRunner {
         encoder.setJpegQuality(quality);
     }
 
+    // ── Gameplay options (mouselook / autoaim / crosshair) ───────────────────
+    private volatile GameplayOptions gameplayOptions = GameplayOptions.DEFAULTS;
+    private volatile boolean         crosshairOn     = false;
+
+    @Override
+    public void setGameplayOptions(GameplayOptions options) {
+        if (options != null) this.gameplayOptions = options;
+    }
+
+    @Override
+    public void setCrosshair(boolean on) {
+        this.crosshairOn = on;
+    }
+
     // ── Multiplayer (P2P) ────────────────────────────────────────────────────
     private volatile int      numPlayers = 1;
     private volatile boolean  p2pMode    = false;
@@ -89,6 +104,15 @@ public class SessionRunner implements ISessionRunner {
     private final AtomicReference<Set<Integer>> currentPressedKeys =
         new AtomicReference<>(Collections.emptySet());
     private Set<Integer> prevKeys = new HashSet<>();
+
+    // Mouse movement and wheel steps since the last tic (written by WebSocket threads).
+    private final AtomicInteger mouseDx    = new AtomicInteger();
+    private final AtomicInteger mouseDy    = new AtomicInteger();
+    private final AtomicInteger wheelSteps = new AtomicInteger();
+    private volatile int        mouseButtons     = 0;
+    private int                 prevMouseButtons = 0;
+    /** Wheel steps queued at most this far ahead, so a fast spin doesn't cycle for seconds. */
+    private static final int    MAX_QUEUED_WHEEL_STEPS = 3;
 
     // ── Audio ────────────────────────────────────────────────────────────────
     private final ConcurrentLinkedQueue<SoundEventDTO> soundQueue  = new ConcurrentLinkedQueue<>();
@@ -117,6 +141,11 @@ public class SessionRunner implements ISessionRunner {
 
     // ── Key mapping (JS keyCode → ScanCode, inlined to avoid gateway compile dep) ──
     private static final Map<Integer, g.Signals.ScanCode> KEY_MAP = buildKeyMap();
+
+    /** Browser keyCode to engine scan code map (read-only; used by tests). */
+    static Map<Integer, g.Signals.ScanCode> keyMap() {
+        return KEY_MAP;
+    }
 
     private static Map<Integer, g.Signals.ScanCode> buildKeyMap() {
         Map<Integer, g.Signals.ScanCode> m = new HashMap<>();
@@ -157,6 +186,16 @@ public class SessionRunner implements ISessionRunner {
         m.put(13,  g.Signals.ScanCode.SC_ENTER);
         m.put(9,   g.Signals.ScanCode.SC_TAB);
         m.put(8,   g.Signals.ScanCode.SC_BACKSPACE);
+        m.put(19,  g.Signals.ScanCode.SC_PAUSE);
+        // Keyboard look (Heretic keys): Page Up / Page Down look, End centres the view
+        m.put(33,  g.Signals.ScanCode.SC_PGUP);
+        m.put(34,  g.Signals.ScanCode.SC_PGDOWN);
+        m.put(35,  g.Signals.ScanCode.SC_END);
+        // - / = : automap zoom, view size. Firefox uses 173 / 61 for these keys.
+        m.put(189, g.Signals.ScanCode.SC_MINUS);
+        m.put(173, g.Signals.ScanCode.SC_MINUS);
+        m.put(187, g.Signals.ScanCode.SC_EQUALS);
+        m.put(61,  g.Signals.ScanCode.SC_EQUALS);
         // F-keys
         m.put(112, g.Signals.ScanCode.SC_F1);   m.put(113, g.Signals.ScanCode.SC_F2);
         m.put(114, g.Signals.ScanCode.SC_F3);   m.put(115, g.Signals.ScanCode.SC_F4);
@@ -284,6 +323,17 @@ public class SessionRunner implements ISessionRunner {
     @Override
     public void updatePressedKeys(Set<Integer> pressedKeys) {
         currentPressedKeys.set(new HashSet<>(pressedKeys));
+    }
+
+    @Override
+    public void addMouseInput(int dx, int dy, int buttons, int wheel) {
+        if (dx != 0) mouseDx.addAndGet(dx);
+        if (dy != 0) mouseDy.addAndGet(dy);
+        mouseButtons = buttons & 7;
+        if (wheel != 0) {
+            wheelSteps.updateAndGet(w -> Math.max(-MAX_QUEUED_WHEEL_STEPS,
+                                         Math.min(MAX_QUEUED_WHEEL_STEPS, w + wheel)));
+        }
     }
 
     // ── ISessionRunner: Game control ─────────────────────────────────────────
@@ -570,6 +620,20 @@ public class SessionRunner implements ISessionRunner {
             dm.key_straferight = g.Signals.ScanCode.SC_D.ordinal();
             logger.info("Key bindings remapped (arrows + WASD)");
 
+            // Mouse buttons, WASD style: left fires, right uses (Chocolate Doom's
+            // mouseb_use); no mouse strafe or mouse-forward buttons (-1 = unbound).
+            dm.mousebfire    = 0;
+            dm.mousebuse     = 1;
+            dm.mousebstrafe  = -1;
+            dm.mousebforward = -1;
+            dm.use_mouse     = true;
+
+            GameplayOptions opts = gameplayOptions;
+            dm.mouselook = opts.isMouselook();
+            dm.autoaim   = opts.isAutoaim();
+            dm.crosshair = crosshairOn;
+            logger.info("Gameplay options: {}", opts);
+
             // ── P2P multiplayer setup (after init, before setupLoop) ─────────
             if (p2pMode && numPlayers > 1 && p2pBus != null) {
                 doom.P2PNetDriver<byte[], byte[]> drv =
@@ -683,6 +747,8 @@ public class SessionRunner implements ISessionRunner {
     private void processInputEvents() {
         if (doomMain == null) return;
         doom.DoomMain<byte[], byte[]> dm = (doom.DoomMain<byte[], byte[]>) doomMain;
+        dm.crosshair = crosshairOn;
+        processMouseInput(dm);
         Set<Integer> current = currentPressedKeys.get();
 
         for (Integer kc : current) {
@@ -692,6 +758,33 @@ public class SessionRunner implements ISessionRunner {
             if (!current.contains(kc)) injectKeyEvent(dm, kc, false);
         }
         prevKeys = new HashSet<>(current);
+    }
+
+    /**
+     * Posts at most one mouse event per tic. The engine's responder overwrites
+     * mousex/mousey on every event, so movement must be added up here first.
+     * Wheel steps are handed out one per tic, like Chocolate Doom's next_weapon.
+     */
+    private void processMouseInput(doom.DoomMain<byte[], byte[]> dm) {
+        int dx = mouseDx.getAndSet(0);
+        int dy = mouseDy.getAndSet(0);
+        int buttons = mouseButtons;
+        if (dx != 0 || dy != 0 || buttons != prevMouseButtons) {
+            dm.PostEvent(new doom.event_t.mouseevent_t(doom.evtype_t.ev_mouse, buttons, dx, dy));
+            prevMouseButtons = buttons;
+        }
+
+        if (dm.nextWeaponRequest == 0) {
+            int w = wheelSteps.get();
+            if (w != 0) {
+                int step = w > 0 ? 1 : -1;
+                wheelSteps.addAndGet(-step);
+                // Only in a level: on the title screen or in a menu there is no weapon to change.
+                if (dm.gamestate == defines.gamestate_t.GS_LEVEL && !dm.menuactive) {
+                    dm.nextWeaponRequest = step;
+                }
+            }
+        }
     }
 
     private void injectKeyEvent(doom.DoomMain<byte[], byte[]> dm, int jsKeyCode, boolean pressed) {

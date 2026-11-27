@@ -17,6 +17,7 @@
 
 package com.doom.gateway;
 
+import com.doom.common.GameplayOptions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -136,6 +137,14 @@ public class SessionManager {
     public DoomSession getOrCreate(String sessionId, String wadName,
                                    int startEp, int startMap, int skill,
                                    String frameFormat, String pwadName) throws Exception {
+        return getOrCreate(sessionId, wadName, startEp, startMap, skill, frameFormat, pwadName,
+                           GameplayOptions.DEFAULTS);
+    }
+
+    public DoomSession getOrCreate(String sessionId, String wadName,
+                                   int startEp, int startMap, int skill,
+                                   String frameFormat, String pwadName,
+                                   GameplayOptions options) throws Exception {
         // Return existing running session
         DoomSession existing = sessions.get(sessionId);
         if (existing != null && existing.isRunning()) {
@@ -161,13 +170,15 @@ public class SessionManager {
         // Resolve optional PWAD path
         String pwadPath = (pwadName != null && !pwadName.isBlank()) ? resolvePwad(pwadName) : null;
 
-        logger.info("Creating new session: id={}, wad={}, E{}M{} skill={} format={} pwad={}",
-            sessionId, wadPath, startEp, startMap, skill, frameFormat, pwadPath != null ? pwadPath : "(none)");
+        logger.info("Creating new session: id={}, wad={}, E{}M{} skill={} format={} pwad={} ({})",
+            sessionId, wadPath, startEp, startMap, skill, frameFormat, pwadPath != null ? pwadPath : "(none)",
+            options);
 
         // Create and start session
         DoomSession session = new DoomSession(sessionId, wadPath, headlessRendererJar);
         session.setFrameFormat(frameFormat);
         session.setPwadPath(pwadPath);
+        session.setGameplayOptions(options);
         sessions.put(sessionId, session);
         try {
             session.start(startEp, startMap, skill);
@@ -221,6 +232,14 @@ public class SessionManager {
     public MatchSession createMatch(String matchId, String wadName, int numPlayers,
                                     int startEp, int startMap, int skill,
                                     String frameFormat, String pwadName) throws Exception {
+        return createMatch(matchId, wadName, numPlayers, startEp, startMap, skill, frameFormat, pwadName,
+                           GameplayOptions.DEFAULTS);
+    }
+
+    public MatchSession createMatch(String matchId, String wadName, int numPlayers,
+                                    int startEp, int startMap, int skill,
+                                    String frameFormat, String pwadName,
+                                    GameplayOptions options) throws Exception {
         // Session cap: reserve numPlayers slots so single-player sessions aren't displaced
         // once engines start. P2P engines start deferred (after all players join).
         long activeCount = countActiveEngines();
@@ -238,12 +257,13 @@ public class SessionManager {
         // Resolve optional PWAD path
         String pwadPath = (pwadName != null && !pwadName.isBlank()) ? resolvePwad(pwadName) : null;
 
-        logger.info("Creating match: id={}, wad={}, players={}, E{}M{} skill={} format={} pwad={}",
+        logger.info("Creating match: id={}, wad={}, players={}, E{}M{} skill={} format={} pwad={} ({})",
             matchId, wadPath, numPlayers, startEp, startMap, skill, frameFormat,
-            pwadPath != null ? pwadPath : "(none)");
+            pwadPath != null ? pwadPath : "(none)", options);
         MatchSession match = new MatchSession(matchId, wadPath, numPlayers, headlessRendererJar);
         match.setFrameFormat(frameFormat);
         match.setPwadPath(pwadPath);
+        match.setGameplayOptions(options);
         matches.put(matchId, match);
         // Store game params; engines are started once all players join via assignSlot()
         match.start(startEp, startMap, skill);

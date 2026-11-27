@@ -112,9 +112,15 @@ public interface ActionsMissiles extends ActionsMobj {
 
         // see which target is to be aimed at
         an = source.angle;
-        slope = AimLineAttack(source, an, 16 * 64 * FRACUNIT);
+        if (source.player != null && !DOOM().autoaim) {
+            // Autoaim off: fire straight along the view pitch (Crispy Doom "direct" aiming).
+            an &= BITS32;
+            slope = ((source.player.lookdir) << FRACBITS) / 173;
+        } else {
+            slope = AimLineAttack(source, an, 16 * 64 * FRACUNIT);
+        }
 
-        if (targ.linetarget == null) {
+        if (targ.linetarget == null && (source.player == null || DOOM().autoaim)) {
             an += 1 << 26;
             an &= BITS32;
             slope = AimLineAttack(source, an, 16 * 64 * FRACUNIT);

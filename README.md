@@ -18,8 +18,12 @@ This project sprouted suddenly and quite humbly into life while pondering over g
 
 ## Features
 
-- **Single-player** with full rendering, keyboard input, sound effects and MIDI music, for DOOM,
-  DOOM II, Final DOOM and the shareware episode.
+- **Single-player** with full rendering, keyboard and mouse input, sound effects and MIDI music, for
+  DOOM, DOOM II, Final DOOM and the shareware episode.
+- **Mouselook.** WASD plus mouse aim with GZDoom-style freelook (y-shearing, Heretic / Crispy Doom
+  look range), on by default. Mouselook, autoaim, a crosshair, sensitivity and invert Y are set on
+  the start page; in a deathmatch, mouselook and autoaim are match rules chosen by the host. The
+  mouse wheel changes weapons. A Controls page (`/system/doom/controls`) lists every key.
 - **Deathmatch** with 2–4 players per match. Each player runs their own engine, kept in lockstep peer
   to peer, and other players join with the match ID.
 - **PWADs and mods.** Vanilla-compatible PWADs work, with automatic IWAD detection, warp to the first
@@ -38,7 +42,7 @@ This project sprouted suddenly and quite humbly into life while pondering over g
 | Deathmatch hardening: high-latency netcode, spawn edge cases | In final testing | Substantially complete |
 | Community WAD verification | In progress | Several vanilla-compatible PWADs verified |
 | Ignition 2027.x support | Experimental | Runs on 2027.2.0-beta2; compiling against the 2027 SDK is still to do |
-| Mouselook (freelook): WASD + mouse aim, using the y-shearing approach of ZDoom and other source ports | Planned | The engine already has Heretic-style freelook (rendering and aiming). Still needed: mouse capture in the browser, WASD bindings, and look direction in the deathmatch command exchange |
+| In-game "Aim & Mouse" menu, so mouselook and the crosshair can change mid-game | Planned | The options are set on the start page for now |
 | MIDI quality: SoundFont selection closer to the original score | Planned | |
 | Ignition 8.1 support | On hold | Needs `javax` servlets and a Jetty 9.4 WebSocket rewrite |
 

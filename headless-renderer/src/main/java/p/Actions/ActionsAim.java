@@ -83,6 +83,12 @@ public interface ActionsAim extends ActionsMissiles {
         // FIXME: angle can already be negative here.
         // Not a problem if it's just moving about (accumulation will work)
         // but it needs to be sanitized before being used in any function.
+        // Autoaim off: shots follow the view pitch exactly (Crispy Doom "direct" aiming).
+        if (mo.player != null && !DOOM().autoaim) {
+            targ.bulletslope = (mo.player.lookdir << FRACBITS) / 173;
+            return;
+        }
+
         an = mo.angle;
         //_D_: &BITS32 will be used later in this function, by fine(co)sine()
         targ.bulletslope = AimLineAttack(mo, an/*&BITS32*/, 16 * 64 * FRACUNIT);
