@@ -11,8 +11,21 @@
 # Signing: if signing\doom-signing.p12 (or $env:DOOM_SIGNING_KEYSTORE) exists, the module is also
 # signed via signing\sign-modl.ps1. Create a keystore once with signing\new-signing-cert.ps1.
 # Pass -NoSign to skip signing.
+#
+# Target Ignition line (-Target):
+#   8.3   (default) requires Ignition 8.3.0+, as declared in module.xml
+#   2027  EXPERIMENTAL: declares Ignition 2027.2.0+ (2027.x gateways refuse 8.3-declared modules).
+#         Same compiled code as the 8.3 build (compiled against the 8.3 SDK); verified to run on
+#         2027.2.0-beta2, but not yet compile-validated against the 2027 SDK.
+#         Output: doom-perspective-vX.Y.Z-ign2027.modl (and -ign2027-signed.modl)
 
-param([switch]$NoSign)
+param(
+    [switch]$NoSign,
+    [ValidateSet('8.3', '2027')][string]$Target = '8.3'
+)
+
+# Declared minimum Ignition version for the experimental 2027.x build.
+$Ign2027MinVersion = '2027.2.0'
 
 $scriptDir = $PSScriptRoot                              # <repo>/ignition-module/
 $src       = Split-Path $scriptDir -Parent              # <repo>/
@@ -22,6 +35,8 @@ $stage     = Join-Path $env:TEMP 'doom-modl-stage'      # %TEMP%/doom-modl-stage
 # Read version from module.xml (used for .modl filename and display)
 [xml]$xml = Get-Content (Join-Path $scriptDir 'module.xml')
 $ver = $xml.modules.module.version
+if ($Target -eq '2027') { $minIgn = $Ign2027MinVersion; $suffix = '-ign2027' }
+else                    { $minIgn = $xml.modules.module.requiredIgnitionVersion; $suffix = '' }
 
 # Read headless-renderer JAR version from its own pom.xml (may differ from module version)
 [xml]$hrPom = Get-Content (Join-Path $src 'headless-renderer\pom.xml')
@@ -31,10 +46,15 @@ Write-Host ""
 Write-Host "============================================================"
 Write-Host "  DOOM Perspective Module Packager  v$ver"
 Write-Host "============================================================"
+Write-Host "  Target:  Ignition $Target (requires $minIgn+)"
 Write-Host "  Source:  $src"
 Write-Host "  Stage:   $stage"
 Write-Host "  Output:  $out"
 Write-Host "============================================================"
+if ($Target -eq '2027') {
+    Write-Host -ForegroundColor Yellow "  EXPERIMENTAL: 2027.x build. Same code as the 8.3 build with the declared version"
+    Write-Host -ForegroundColor Yellow "  changed; runs on 2027.2.0-beta2 but is not compile-validated against the 2027 SDK."
+}
 Write-Host ""
 
 # Verify all inputs exist before touching anything (a missing JAR must not yield a partial .modl)
@@ -61,12 +81,18 @@ if (-not (Test-Path $out)) { New-Item -ItemType Directory -Path $out | Out-Null 
 # Copy module files into staging dir
 foreach ($name in $inputs.Keys) { Copy-Item $inputs[$name] (Join-Path $stage $name) -ErrorAction Stop }
 
+# Target line: set the declared minimum Ignition version in the STAGED module.xml only
+$stagedXml = Join-Path $stage 'module.xml'
+$text = [IO.File]::ReadAllText($stagedXml)
+$text = $text -replace '<requiredIgnitionVersion>[^<]*</requiredIgnitionVersion>', "<requiredIgnitionVersion>$minIgn</requiredIgnitionVersion>"
+[IO.File]::WriteAllText($stagedXml, $text, [Text.UTF8Encoding]::new($false))
+
 Write-Host "Staged files:"
 Get-ChildItem $stage | Format-Table Name, Length
 
 # Zip staged files and copy as .modl
-$zip  = Join-Path $env:TEMP "doom-perspective-v$ver.zip"
-$modl = Join-Path $out      "doom-perspective-v$ver.modl"
+$zip  = Join-Path $env:TEMP "doom-perspective-v$ver$suffix.zip"
+$modl = Join-Path $out      "doom-perspective-v$ver$suffix.modl"
 
 if (Test-Path $zip)  { Remove-Item $zip  -Force }
 if (Test-Path $modl) { Remove-Item $modl -Force }

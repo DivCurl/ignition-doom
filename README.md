@@ -4,311 +4,106 @@ Running DOOM natively inside Inductive Automation Ignition Perspective, with ser
 
 This project sprouted suddenly and quite humbly into life while pondering over general low-level rendering capabilities in Ignition Perspective, and quickly became an obsession-driven side project while trying (and failing) to decompress from the daily grind — as more dirt was shoveled away to expose something... delightfully hellish. As a 90s kid, the original Doom holds a very special place in my heart for exposing my fragile but curious brain to the magic of computers. Later, I came to admire the craftsmanship, creativity, and raw engineering talent of the id Software team of that era with equal amounts of awe and respect. I therefore must dedicate each hour spent on this to the original id Software team, without whom none of this would be possible.
 
-**Current Version:** v0.9.8
+---
+
+## Contents
+
+- [Features](#features) · [Roadmap](#roadmap) · [Quick Start](#quick-start) ·
+  [Compatibility](#compatibility)
+- [Documentation](#documentation): [Building](docs/building.md) · [Deployment](docs/deployment.md) ·
+  [Architecture](docs/architecture.md)
+- [References](#references) · [License](#license) · [Credits](#credits)
 
 ---
 
 ## Features
 
-| Feature | Status |
-|---|---|
-| Single-player — full rendering, input, SFX, and MIDI music across all supported WADs | ✅ Working |
-| P2P deathmatch — up to 4 players, independent engine per player, lockstep sync | ✅ Working |
-| PWAD / mod support — IWAD auto-detection, auto-warp to first map, skill selection | ✅ Working |
-| Session management — up to 4 concurrent sessions, idle reaping, admin controls | ✅ Working |
-| Self-hosted — all assets served from the gateway, zero external network dependencies | ✅ Working |
+- **Single-player** with full rendering, keyboard input, sound effects and MIDI music, for DOOM,
+  DOOM II, Final DOOM and the shareware episode.
+- **Deathmatch** with 2–4 players per match. Each player runs their own engine, kept in lockstep peer
+  to peer, and other players join with the match ID.
+- **PWADs and mods.** Vanilla-compatible PWADs work, with automatic IWAD detection, warp to the first
+  map, and skill selection. See [WADs and mods](#wads-and-mods) for the limits.
+- **Gateway-friendly operation**: a cap on concurrent games, automatic cleanup of idle games, an
+  optional play password, and an Admin Settings panel protected by a master password.
+- **Self-hosted.** The gateway serves every asset itself, so no external network access is needed.
+- **Ignition 8.3.0 and later**, tested through 8.3.11-rc1 on Linux gateways. Asset folders follow
+  the gateway's own install location, so Windows gateways should work too, but haven't been tested
+  yet. An experimental build targets Ignition 2027.x. See [Compatibility](#compatibility).
 
-## TODO
+## Roadmap
 
-| Feature | Status |
-|---|---|
-| Compatibility testing — Linux gateway, additional Ignition versions, community WADs | 🔲 Planned |
-| Deathmatch hardening — high-latency netcode, spawn edge cases | 🔲 Planned |
-| MIDI quality — improved SoundFont selection for a closer match to the classic score | 🔲 Planned |
-
----
-
-## Architecture Overview
-
-```
-Browser
-  └─ GET /system/doom/frame/stream   ← MJPEG push stream (server pushes JPEG frames as rendered)
-  └─ WS  /system/doom-ws             ← primary: input + sound/music events (bidirectional)
-  └─ POST /system/doom/input         ← fallback: keyboard state (JS keyCodes)
-  └─ GET /system/doom/events/stream  ← fallback: SSE sound/music events
-
-Gateway (Ignition Module)
-  └─ DoomInputServlet                ← all HTTP routing
-  └─ DoomWebSocketServlet            ← WebSocket upgrade handler
-  └─ SessionManager                  ← lifecycle, WAD discovery, session cap
-  └─ DoomSession                     ← per-session child ClassLoader + engine wrapper
-  └─ MatchSession                    ← N independent engines + TikcmdBus
-  └─ TikcmdBus                       ← ring-buffer tikcmd exchange for P2P lockstep
-
-Engine (per session, child ClassLoader)
-  └─ Mocha DOOM                      ← pure-Java DOOM engine (35 tics/sec, headless)
-  └─ P2PNetDriver                    ← exchanges 8-byte tikcmds with peer engines
-  └─ HeadlessSoundDriver             ← origin-tracked sound events
-  └─ HeadlessMusicDriver             ← MUS→MIDI conversion
-  └─ FrameEncoder                    ← palette→RGB→PNG/JPEG, dedicated encoder thread
-```
-
-**ClassLoader isolation** — each browser session gets a child-first `SessionClassLoader` that loads `headless-renderer.jar`, isolating all Mocha DOOM statics per session.
-
-**P2P multiplayer** — each player gets their own independent DOOM engine. Engines exchange 8-byte serialized tikcmds via `TikcmdBus` (a ring buffer in `common.jar`). DOOM's deterministic simulation keeps all engines in lockstep — identical tikcmd sequences produce identical game state.
-
----
-
-## Technology Stack
-
-| Component | Technology |
-|---|---|
-| Game engine | Mocha DOOM (pure Java port of Chocolate Doom) |
-| Rendering | Palette-indexed software renderer, 640×400, JPEG (PNG optional via `?format=png`) |
-| Transport | HTTP servlet — MJPEG push stream for frames; WebSocket (SSE/POST fallback) for input and events |
-| Multiplayer | P2P tikcmd-sync via TikcmdBus ring buffer |
-| Sound effects | DMX sounds from WAD, Web Audio API, 44100 Hz 16-bit |
-| Music | MUS→MIDI server-side, SoundFont playback browser-side |
-| SoundFonts | FluidR3_GM (gleitz fork for melodic, paulrosen fork for percussion) |
-| Platform | Ignition Gateway Module (Java 17; tested on 8.3.1) |
-
----
-
-## Prerequisites
-
-- Java 11+, Maven 3.8+ *(module compiles to Java 11 bytecode; Java 17 required at runtime by Ignition)*
-- Ignition gateway, self-hosted or Docker (tested on 8.3.1)
-- **Either** a signed `.modl` (see [Signing the module](#signing-the-module-optional)) **or** unsigned module installation enabled on the target gateway (`allowunsignedmodules=true` in `ignition.conf`)
-- Docker + image `inductiveautomation/ignition:8.3.1` *(only for the container-based setup)*
-- Internet access for first-run asset downloads (soundfonts; DOOM1.WAD ships with the repo)
+| Item | Status | Notes |
+|---|---|---|
+| Deathmatch hardening: high-latency netcode, spawn edge cases | In final testing | Substantially complete |
+| Community WAD verification | In progress | Several vanilla-compatible PWADs verified |
+| Ignition 2027.x support | Experimental | Runs on 2027.2.0-beta2; compiling against the 2027 SDK is still to do |
+| Mouselook (freelook): WASD + mouse aim, using the y-shearing approach of ZDoom and other source ports | Planned | The engine already has Heretic-style freelook (rendering and aiming). Still needed: mouse capture in the browser, WASD bindings, and look direction in the deathmatch command exchange |
+| MIDI quality: SoundFont selection closer to the original score | Planned | |
+| Ignition 8.1 support | On hold | Needs `javax` servlets and a Jetty 9.4 WebSocket rewrite |
 
 ---
 
 ## Quick Start
 
-**1. Download assets (first run only)**
+The fastest way to try it is a local Docker gateway. Each step links to the full instructions.
 
-```bat
-scripts\get-assets.bat        # Windows
-scripts/get-assets.sh         # Linux/Mac
-```
-
-Downloads the FluidR3_GM soundfonts (~99 MB) into `assets/`. DOOM1.WAD (shareware, ~4 MB) is already in the repo; the script restores it from git if it is missing.
-
-**2. Build the module**
-
-```bash
-cd ignition-module
-mvn package -DskipTests
-```
-
-This one command builds `common`, `headless-renderer` and `gateway` in dependency order. The
-`ignition-module/pom.xml` reactor includes `../headless-renderer`. Avoid `mvn clean` if an IDE has
-the build output open, because a file lock can make it fail. In that case, delete the
-`target/classes` folders by hand.
-
-The gateway deliberately has no compile dependency on `headless-renderer`. Any accidental import of
-engine classes (`mochadoom.*`, `doom.*`, `com.doom.headless.*`, …) into gateway code fails the build.
-
-The Ignition SDK is fetched automatically from Inductive Automation's public Maven repository.
-If that's unavailable, see [ignition-module/INSTALL-SDK.md](ignition-module/INSTALL-SDK.md).
-
-**3. Package the .modl file**
-
-Both scripts stage files outside the workspace to avoid file-lock conflicts with open editors.
-Output goes to `ignition-module/build/`.
-
-**Windows** — run from PowerShell:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File ignition-module\package-doom-modl.ps1
-```
-
-**Linux / Mac** — requires `zip` and `xmllint` (or `grep`/`sed` as fallback):
-
-```bash
-bash ignition-module/package-doom-modl.sh
-```
-
-#### Signing the module (optional)
-
-A signed module installs on gateways that don't allow unsigned modules. Signing uses Inductive
-Automation's [module-signer](https://github.com/inductiveautomation/module-signer) with a
-self-signed RSA code-signing certificate.
-
-Create the certificate once. This needs `keytool` from the JDK; the bash version also needs `openssl`.
-
-```powershell
-powershell -ExecutionPolicy Bypass -File ignition-module\signing\new-signing-cert.ps1   # Windows
-```
-```bash
-bash ignition-module/signing/new-signing-cert.sh                                       # Linux/Mac
-```
-
-This writes `ignition-module/signing/doom-signing.p12` (the private key) and `doom-signing.p7b`
-(the certificate chain). Both are gitignored. Back up the `.p12` and keep it private. If you
-replace it, every gateway has to accept the new certificate again. The script prints the
-certificate's SHA-256 fingerprint. Publish it with releases so gateway admins can check that the
-certificate they accept is yours.
-
-Once the keystore exists, the packaging scripts also write
-`doom-perspective-vX.Y.Z-signed.modl`, next to the unsigned file. To sign an existing `.modl`
-directly, run `signing/sign-modl.ps1 -ModlIn <file>` or `signing/sign-modl.sh <file>`.
-
-- **Password**: set `DOOM_SIGNING_PASSWORD`, or enter it when prompted.
-- **Skip signing**: pass `-NoSign` / `--no-sign` to the packaging scripts.
-- **Different certificate**: set `DOOM_SIGNING_KEYSTORE`, `DOOM_SIGNING_CHAIN` and `DOOM_SIGNING_ALIAS`.
-  This works with any RSA code-signing keystore (`.p12`/`.pfx`/`.jks`) and its `.p7b` chain,
-  including a certificate issued by a CA.
-- **First run**: the module-signer jar is downloaded from IA's public Nexus into
-  `ignition-module/signing/tools/` and checked against a pinned SHA-1.
-
-When a module's certificate is self-signed rather than issued by a trusted CA, the gateway asks
-the admin to review and accept the certificate when the module is installed.
-
-**4. Deploy to Ignition**
-
-**Option A — Docker (recommended for local development)**
-
-Run once to create and configure the container (pick any container name):
-
-```bat
-scripts\setup-ignition-container.bat <container-name>     # Windows
-scripts/setup-ignition-container.sh <container-name>      # Linux/Mac
-```
-
-> **Warning:** if a container with that name already exists, setup **deletes and recreates it**,
-> and all gateway data in it is lost. The script asks you to type the name to confirm; `-y` skips
-> the prompt. Set `IGNITION_PORT` to publish the gateway on a host port other than 8088.
-
-To add or refresh assets (WADs, soundfonts, branding, PWADs) in an already-running container:
-
-```bat
-scripts\deploy-assets.bat <container-name> [-w] [-s] [-b] [-p] [--clean]    # Windows
-scripts/deploy-assets.sh <container-name> [-w] [-s] [-b] [-p] [--clean]     # Linux/Mac
-```
-
-With no flags, every category is deployed. `-w` deploys WADs, `-s` soundfonts, `-b` branding and
-`-p` PWADs. `--clean` deletes the selected categories in the container before redeploying them.
-
-Setup creates a local Ignition Docker container (using image `inductiveautomation/ignition:8.3.1`)
-and enables unsigned modules. It calls `deploy-assets` automatically, and you can re-run
-`deploy-assets` on its own at any time. All scripts can be run from any directory.
-
-**Option B — Existing Ignition gateway**
-
-1. Use the `-signed.modl` build ([Signing the module](#signing-the-module-optional)), *or* enable
-   unsigned modules: add `allowunsignedmodules=true` to `ignition.conf` in your Ignition data
-   directory, then restart the gateway.
-2. Copy WAD files into `<ignition-install>/user-lib/doom/`
-3. Copy soundfont JS files into `<ignition-install>/user-lib/doom/soundfonts/`
-4. Install the module: **Gateway Config → Modules → Install or Upgrade Module**, select the `.modl`
-
-**5. Play**
-
-Navigate to the following paths on your Ignition gateway (e.g. `http://localhost:8088` for a
-local Docker install):
-
-- Single-player: `/system/doom/play`
-- Deathmatch: `/system/doom/match/create?wad=DOOM2&players=2`
+1. **Get the assets** (soundfonts; the shareware DOOM1.WAD is already in the repo):
+   `scripts/get-assets.sh` or `scripts\get-assets.bat`.
+2. **Build and package the module**, ideally signed. This needs a one-time Ignition SDK setup.
+   See [Building](docs/building.md).
+3. **Create a gateway and install the module.** `scripts/setup-ignition-container.sh <name>` (or
+   `.bat`) creates an Ignition 8.3.1 container and copies in the WADs and soundfonts. Then install
+   the `-signed.modl` under **Gateway Config → Modules**. For an existing gateway, see
+   [Deployment](docs/deployment.md).
+4. **Play.** Open `http://localhost:8088/system/doom`. On the first visit, set a master password
+   using the setup code from the gateway log (`docker logs <name> | grep "setup code"`). See
+   [Access Control](docs/deployment.md#access-control).
 
 ---
 
-## Deployment File Locations
+## Compatibility
 
-**Docker container** (paths inside the container, as used by `setup-ignition-container.*`):
+### Ignition versions
 
-| Path | Contents |
+Tested on Linux gateways in Docker. The automated smoke test
+(`scripts/test-ignition-versions.sh`) installs the module, starts a single-player game, waits for a
+rendered frame, and loads the sound list. The WebSocket handshake and gameplay were also checked by
+hand on each version.
+
+| Ignition | Status | Notes |
+|---|---|---|
+| 8.3.0 | Supported | Declared minimum of the 8.3 build |
+| 8.3.1 | Supported | |
+| 8.3.9 | Supported | |
+| 8.3.10 | Supported | |
+| 8.3.11-rc1 | Supported | Release candidate |
+| 2027.2.0-beta2 | Experimental | Use the 2027 build (`-Target 2027`); runs on Java 25. The 8.3 build is refused: *"requires Ignition 8.3.0 and is not compatible with Ignition 2027.2.0"* |
+| 8.1, 7.x | Not supported | 8.3 moved to Jetty 12 and Jakarta servlets. 8.1 uses Jetty 9.4 and `javax` servlets; 7.x runs on Java 8 |
+
+The smoke test can be repeated for any version; see [Testing Ignition versions](docs/building.md#testing-ignition-versions).
+
+### WADs and mods
+
+The engine is Mocha DOOM, a Java port of id Software's original source with some prBoom
+extensions. A WAD made for the original engine, the kind that runs in Chocolate Doom, works here.
+Several community PWADs have been verified.
+
+| Supported | Not supported |
 |---|---|
-| `/usr/local/bin/ignition/user-lib/doom/*.WAD` | Game IWADs (DOOM1, DOOM, DOOM2, TNT, PLUTONIA) |
-| `/usr/local/bin/ignition/user-lib/doom/soundfonts/` | FluidR3_GM instrument JS files |
-| `/usr/local/bin/ignition/data/ignition.conf` | `allowunsignedmodules=true` flag |
+| IWADs: DOOM (shareware and registered), Ultimate DOOM, DOOM II, TNT: Evilution, The Plutonia Experiment | DEHACKED patches. They are ignored, so modified monsters, weapons or text revert to stock behaviour |
+| Vanilla-format PWADs: maps, textures, sounds, music | Hexen-format and UDMF maps |
+| ZDoom extended nodes (ZNODES) and DeepBSP nodes, for large maps | ACS scripting, DECORATE, MAPINFO |
 
-**Existing gateway** (adjust root path for your OS and install location):
+---
 
-| Path | Contents |
+## Documentation
+
+| Document | Contents |
 |---|---|
-| `<ignition-install>/user-lib/doom/*.WAD` | Game IWADs |
-| `<ignition-install>/user-lib/doom/soundfonts/` | FluidR3_GM instrument JS files |
-| `<ignition-install>/data/ignition.conf` | `allowunsignedmodules=true` flag |
-
-Typical install roots: `/usr/local/bin/ignition/` (Linux), `C:\Program Files\Inductive Automation\Ignition\` (Windows).
-
----
-
-## Key URLs
-
-All paths are relative to your Ignition gateway root (e.g. `http://localhost:8088`).
-
-| Path | Description |
-|---|---|
-| `/system/doom` | Session landing page — start games, view active sessions |
-| `/system/doom/play` | Single-player (default WAD) |
-| `/system/doom/play?wad=DOOM2` | Single-player with WAD selection |
-| `/system/doom/play?wad=DOOM2&pwad=mymod.wad&skill=3` | Single-player with PWAD and skill level (0–4) |
-| `/system/doom/match/create?wad=DOOM2&players=2` | Create a 2-player deathmatch |
-| `/system/doom/health` | JSON health + session/match status |
-| `/system/doom/admin?token=TOKEN` | Session admin (token printed in gateway log on startup) |
-
----
-
-## Key Design Decisions
-
-**ClassLoader isolation** — each browser session gets a child-first `SessionClassLoader` that loads `headless-renderer.jar`. This isolates all Mocha DOOM statics (palette, WAD cache, game state) per session with no singleton collision across tabs.
-
-**Interface bridge** — `ISessionRunner` lives in `common.jar` (parent classloader). `SessionRunner` in `headless-renderer.jar` (child classloader) implements it. All cross-boundary calls go through this interface; DTOs are plain Java types to avoid classloader boundary issues.
-
-**Session cap** — `SessionManager` enforces MAX_SESSIONS=4 across single-player sessions and multiplayer matches combined. A 5th engine request returns HTTP 503.
-
-**Multiplayer (P2P tikcmd-sync)** — each player gets their own independent DOOM engine (`DoomSession`) running on its own thread. Engines share a `TikcmdBus` ring buffer (`common.jar`, parent classloader) and exchange 8-byte serialized tikcmds each game tic via `P2PNetDriver`. DOOM's deterministic simulation keeps all engines in lockstep. Each browser naturally gets the correct POV, HUD, sound, and music. Engines start in parallel background threads once all player slots are filled; browsers poll `/match/status` during the lobby.
-
-**MJPEG push streaming** — frames served via `GET /system/doom/frame/stream?session=UUID` as a `multipart/x-mixed-replace` stream. The server holds the response open and pushes each encoded JPEG as it's rendered, decoupling frame rate from browser round-trip time. No memory tags, no polling.
-
-**WebSocket transport** — input keycodes and audio events (sound + music) are exchanged over a single bidirectional WebSocket (`/system/doom-ws`), eliminating SSE/POST round-trip overhead. The browser falls back to SSE + POST if the WebSocket handshake fails.
-
-**Self-hosted audio** — all assets served from the Ignition gateway. `soundfont-player.min.js` bundled in `gateway.jar`. Instrument JS files on the gateway filesystem under `user-lib/doom/soundfonts/`. Zero external network dependencies — works air-gapped.
-
-**VerifyError fix** — Java 17 bytecode verifier rejects nested ternaries with generic array casts. `SoftwareGraphicsSystem.colormap()` uses explicit if-else chains to avoid this.
-
----
-
-## Repository Structure
-
-```
-ignition-doom/
-├── README.md                        This file
-├── LICENSE                          GNU General Public License v3
-├── .gitattributes                   Forces LF for .sh and CRLF for .bat scripts on every platform
-├── CREDITS.md                       Third-party licenses and attribution
-├── scripts/                         Setup and helper scripts (each as .bat + .sh; run from any directory)
-│   ├── get-assets                   First-run downloader — soundfonts (restores DOOM1.WAD from git if missing)
-│   ├── setup-ignition-container     One-time Docker container creation and configuration
-│   └── deploy-assets                Copy WADs, soundfonts, branding, and PWADs to a running container
-├── headless-renderer/               Mocha DOOM + headless rendering pipeline (JAR)
-│   └── src/main/java/
-│       ├── com/doom/headless/       SessionRunner, FrameEncoder, DoomSoundExtractor
-│       ├── doom/                    P2PNetDriver (package-private field access)
-│       ├── s/                       HeadlessMusicDriver, HeadlessSoundDriver
-│       ├── v/renderers/             BufferedRenderer, HeadlessIndexedRenderer
-│       └── mochadoom/               Engine entry point (headless + singleton)
-├── ignition-module/                 Ignition Gateway Module; its pom.xml is the build reactor (also builds ../headless-renderer)
-│   ├── common/                      TikcmdBus + ISessionRunner (parent classloader)
-│   ├── gateway/                     SessionManager, DoomSession, DoomInputServlet, ...
-│   │   └── src/main/java/com/doom/gateway/
-│   │       ├── DoomLandingPage.java Session landing page HTML generator
-│   │       └── ...
-│   ├── module.xml                   Module descriptor
-│   ├── package-doom-modl.ps1        Windows: packages JARs into .modl (PowerShell)
-│   ├── package-doom-modl.sh         Linux/Mac: packages JARs into .modl (bash)
-│   ├── signing/                     Optional module signing (new-signing-cert / sign-modl, .ps1 + .sh)
-│   ├── build/                       Deployable .modl artifacts (gitignored)
-│   ├── install-sdk.bat              Fallback: extract SDK JARs from Docker container
-│   └── INSTALL-SDK.md               SDK installation guide
-└── assets/                          Local game assets (most gitignored)
-    ├── iwads/                       IWAD files: DOOM1.WAD committed; DOOM.WAD, DOOM2.WAD, etc. gitignored
-    ├── pwads/                       Optional PWAD/mod files (gitignored)
-    └── soundfonts/                  FluidR3_GM JS files (gitignored, fetched by get-assets)
-```
+| [Building](docs/building.md) | Prerequisites, assets, Ignition SDK setup, build, packaging (8.3 and experimental 2027 targets), signing, version testing |
+| [Deployment](docs/deployment.md) | Docker and existing-gateway installs, file locations, URLs, access control (master and play passwords), resource requirements |
+| [Architecture](docs/architecture.md) | Request flow, technology stack, design decisions, repository structure |
 
 ---
 
@@ -319,7 +114,7 @@ ignition-doom/
 - [DOOM Wiki](https://doomwiki.org) — WAD format, MUS format, DMX sound format specs
 - [gleitz/midi-js-soundfonts](https://github.com/gleitz/midi-js-soundfonts) — FluidR3_GM melodic instruments
 - [paulrosen/midi-js-soundfonts](https://github.com/paulrosen/midi-js-soundfonts) — FluidR3_GM + percussion
-- [Ignition SDK](https://docs.inductiveautomation.com/docs/8.1/appendix/sdk)
+- [Ignition SDK documentation](https://www.sdk-docs.inductiveautomation.com/)
 
 ---
 

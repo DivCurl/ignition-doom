@@ -7,11 +7,15 @@ REM - DOOM WAD file installation
 REM - Unsigned module support enabled
 REM - Proper directory structure and permissions
 REM
-REM Usage:  scripts\setup-ignition-container.bat <container-name> [-y^|--yes]
+REM Usage:  scripts\setup-ignition-container.bat <container-name> [-y^|--yes] [--allow-unsigned]
 REM
 REM   If a container with that name already exists it is DELETED and recreated
 REM   (all gateway data in it is lost). You are asked to confirm unless -y is given.
 REM   Set IGNITION_PORT to publish the gateway on a host port other than 8088.
+REM
+REM   Unsigned modules are NOT allowed by default: install the -signed.modl (see
+REM   ignition-module\signing\). --allow-unsigned pre-sets the gateway to accept
+REM   unsigned modules; scripts\set-unsigned-modules.bat changes it later.
 REM ============================================================================
 
 setlocal enabledelayedexpansion
@@ -22,16 +26,16 @@ if "%~1"=="" goto :usage_error
 set "CONTAINER_NAME=%~1"
 if "%CONTAINER_NAME:~0,1%"=="-" goto :usage_error
 set ASSUME_YES=
-if /i "%~2"=="-y"    set ASSUME_YES=1
-if /i "%~2"=="--yes" set ASSUME_YES=1
-if not "%~2"=="" if not defined ASSUME_YES (
-    echo ERROR: Unknown option: %~2
-    goto :usage_error
-)
-if not "%~3"=="" (
-    echo ERROR: Unexpected argument: %~3
-    goto :usage_error
-)
+set ALLOW_UNSIGNED=
+:parse_args
+shift
+if "%~1"=="" goto :args_done
+if /i "%~1"=="-y"               ( set ASSUME_YES=1& goto :parse_args )
+if /i "%~1"=="--yes"            ( set ASSUME_YES=1& goto :parse_args )
+if /i "%~1"=="--allow-unsigned" ( set ALLOW_UNSIGNED=1& goto :parse_args )
+echo ERROR: Unknown option: %~1
+goto :usage_error
+:args_done
 
 REM Configuration
 set IGNITION_IMAGE=inductiveautomation/ignition:8.3.1
@@ -139,33 +143,28 @@ if errorlevel 1 (
     echo      WARNING: Asset deployment reported errors - check output above.
 )
 
-REM Step 6: Enable unsigned modules and set heap memory
+REM Step 6: Gateway configuration (heap memory; unsigned modules only if requested)
 echo.
-echo [6/7] Enabling unsigned module installation and setting heap memory...
-docker exec "%CONTAINER_NAME%" bash -c "echo 'wrapper.java.additional.9=-Dignition.allowunsignedmodules=true' >> /usr/local/bin/ignition/data/ignition.conf"
-if errorlevel 1 (
-    echo      ERROR: Failed to update configuration
-    goto :error
-)
-docker exec "%CONTAINER_NAME%" bash -c "echo 'wrapper.java.maxmemory=3072' >> /usr/local/bin/ignition/data/ignition.conf"
+echo [6/7] Configuring gateway (heap memory, unsigned modules if set by config)...
+docker exec "%CONTAINER_NAME%" bash -c "echo 'wrapper.java.maxmemory=3072' >> /usr/local/bin/ignition/data/ignition.conf && grep -q '^wrapper.java.maxmemory=3072' /usr/local/bin/ignition/data/ignition.conf"
 if errorlevel 1 (
     echo      ERROR: Failed to set heap memory
     goto :error
 )
-
-REM Verify configuration
-docker exec "%CONTAINER_NAME%" bash -c "grep 'allowunsignedmodules' /usr/local/bin/ignition/data/ignition.conf" >nul 2>&1
-if errorlevel 1 (
-    echo      ERROR: Configuration verification failed
-    goto :error
-)
-echo      Unsigned modules enabled
-docker exec "%CONTAINER_NAME%" bash -c "grep 'wrapper.java.maxmemory' /usr/local/bin/ignition/data/ignition.conf" >nul 2>&1
-if errorlevel 1 (
-    echo      ERROR: Heap memory configuration verification failed
-    goto :error
-)
 echo      Heap memory set to 3072 MB
+if not defined ALLOW_UNSIGNED goto :unsigned_default
+REM The ignition.conf logic lives in one shared script, piped into the container.
+docker exec -i "%CONTAINER_NAME%" bash -s -- on < scripts\lib\unsigned-modules.sh >nul
+if errorlevel 1 (
+    echo      ERROR: Failed to allow unsigned modules
+    goto :error
+)
+echo      Unsigned modules allowed
+goto :unsigned_done
+:unsigned_default
+echo      Unsigned modules NOT allowed (default) - install the -signed.modl,
+echo      or run: scripts\set-unsigned-modules.bat %CONTAINER_NAME% on
+:unsigned_done
 
 REM Step 7: Restart container to apply configuration
 echo.
@@ -207,7 +206,7 @@ endlocal & exit /b 1
 
 :usage_error
 echo ERROR: Container name is required as the first argument.
-echo Usage: scripts\setup-ignition-container.bat ^<container-name^> [-y^|--yes]
+echo Usage: scripts\setup-ignition-container.bat ^<container-name^> [-y^|--yes] [--allow-unsigned]
 endlocal & exit /b 1
 
 :error

@@ -7,8 +7,26 @@ package com.doom.gateway;
  * All live data is fetched client-side from /system/doom/health via JS polling — no separate
  * data endpoint is needed. Branding images are served from /system/doom/branding/{file} and
  * fail silently via onerror if the branding directory has not been populated.
+ *
+ * <p>Owner features (first-run setup, master-password login, Settings, ending games) live in
+ * {@code static/owner.js}, loaded with a content hash in its URL so browsers never run a stale
+ * copy after a module upgrade (static files are cached for a day).
  */
 public class DoomLandingPage {
+
+    /** Short hash of static/owner.js, used as a cache-busting query parameter. */
+    private static final String OWNER_JS_VERSION = resourceHash("/static/owner.js");
+
+    private static String resourceHash(String resource) {
+        try (java.io.InputStream in = DoomLandingPage.class.getResourceAsStream(resource)) {
+            if (in == null) return "0";
+            java.util.zip.CRC32 crc = new java.util.zip.CRC32();
+            crc.update(in.readAllBytes());
+            return Long.toHexString(crc.getValue());
+        } catch (java.io.IOException e) {
+            return "0";
+        }
+    }
 
     public static String getHTML(java.util.List<String> brandingFiles) {
         // Build branding <img> tags from the server-side file list
@@ -35,9 +53,12 @@ public class DoomLandingPage {
             + ".header { border-bottom: 1px solid #333; padding-bottom: 14px; margin-bottom: 8px; }\n"
             + ".header-row { display: flex; align-items: center; gap: 18px; }\n"
             + ".header-logo { height: 110px; width: auto; border-radius: 3px; opacity: 0.92; }\n"
-            + ".header-text { display: flex; flex-direction: column; justify-content: center; gap: 6px; }\n"
+            + ".header-text { display: flex; flex-direction: column; justify-content: center; gap: 9px; }\n"
             + ".header-title { color: #ff4444; font-size: 28px; font-weight: bold; text-transform: uppercase; letter-spacing: 6px; line-height: 1; }\n"
-            + ".header-desc { color: #888; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; }\n"
+            + ".header-desc { color: #b4b4b4; font-size: 13px; letter-spacing: 3px; text-transform: uppercase; }\n"
+            + ".header-credit { color: #8c8c8c; font-size: 12px; letter-spacing: 1px; }\n"
+            + ".header-credit a { color: #ff6b6b; text-decoration: none; font-weight: bold; }\n"
+            + ".header-credit a:hover { color: #ff9999; text-decoration: underline; }\n"
 
             // Branding row
             + ".branding-row { display: flex; align-items: center; gap: 32px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #1e1e1e; min-height: 0; }\n"
@@ -49,8 +70,8 @@ public class DoomLandingPage {
             + ".stats-bar .sep { margin: 0 10px; color: #444; }\n"
             + ".stat-engines.full .used { color: #ff4444; }\n"
             + ".stat-links { margin-left: auto; display: flex; gap: 14px; }\n"
-            + ".stat-link { color: #666; font-size: 11px; text-decoration: none; letter-spacing: 1px; text-transform: uppercase; }\n"
-            + ".stat-link:hover { color: #aaa; }\n"
+            + ".stat-link { color: #9a9a9a; font-size: 12px; text-decoration: none; letter-spacing: 1px; text-transform: uppercase; }\n"
+            + ".stat-link:hover { color: #ddd; }\n"
 
             // Cap warning
             + ".cap-warning { background: #1a0a00; border: 1px solid #663300; color: #ff8844; padding: 9px 16px; font-size: 12px; margin-bottom: 18px; letter-spacing: 1px; }\n"
@@ -74,8 +95,8 @@ public class DoomLandingPage {
             + ".btn:disabled { opacity: 0.4; cursor: not-allowed; }\n"
             + ".match-id-input { width:100%; background:#1a1a1a; color:#ccc; border:1px solid #333; font-family:'Courier New',monospace; font-size:13px; padding:8px 10px; outline:none; text-transform:uppercase; letter-spacing:1px; }\n"
             + ".match-id-input:focus { border-color:#ff4444; }\n"
-            + ".match-id-input::placeholder { color:#444; text-transform:none; letter-spacing:0; }\n"
-            + ".match-id-hint { font-size:11px; color:#777; margin-top:4px; }\n"
+            + ".match-id-input::placeholder { color:#6e6e6e; text-transform:none; letter-spacing:0; }\n"
+            + ".match-id-hint { font-size:12px; color:#9a9a9a; margin-top:4px; }\n"
             + ".detect-badge { display:none; align-items:center; gap:6px; margin-top:6px; padding:5px 10px; background:#1f0a0a; border:1px solid #5a1a1a; color:#cc7777; font-size:11px; letter-spacing:0.5px; }\n"
             + ".detect-badge.visible { display:inline-flex; }\n"
             + ".detect-badge .db-icon { color:#cc3333; }\n"
@@ -87,33 +108,35 @@ public class DoomLandingPage {
 
             // Sections
             + ".section-header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }\n"
-            + ".section-title { color: #ff4444; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 3px; }\n"
-            + ".section-count { color: #555; font-size: 11px; }\n"
+            + ".section-title { color: #ff4444; font-size: 13px; font-weight: bold; text-transform: uppercase; letter-spacing: 3px; }\n"
+            + ".section-count { color: #8a8a8a; font-size: 12px; }\n"
 
             // Tables
             + "table { border-collapse: collapse; width: 100%; margin-bottom: 28px; }\n"
-            + "th { color: #ff4444; text-align: left; padding: 7px 14px; border-bottom: 2px solid #ff4444; text-transform: uppercase; letter-spacing: 2px; font-size: 10px; }\n"
+            + "th { color: #ff4444; text-align: left; padding: 7px 14px; border-bottom: 2px solid #ff4444; text-transform: uppercase; letter-spacing: 2px; font-size: 11px; }\n"
             + "td { padding: 8px 14px; border-bottom: 1px solid #1c1c1c; font-size: 12px; vertical-align: middle; }\n"
             + "tr:hover td { background: #131313; }\n"
-            + ".empty-row td { color: #444; padding: 20px 14px; text-align: center; }\n"
+            + ".empty-row td { color: #7a7a7a; padding: 20px 14px; text-align: center; }\n"
             + "tr:hover.empty-row td { background: transparent; }\n"
 
             // Cell types
-            + ".cell-id { color: #6688bb; font-size: 11px; cursor: pointer; user-select: all; }\n"
+            + ".cell-id { color: #6688bb; font-size: 12px; cursor: pointer; user-select: all; }\n"
             + ".cell-id:hover { color: #88aadd; }\n"
             + ".cell-wad { color: #ffcc00; }\n"
             + ".cell-time { color: #aaa; }\n"
-            + ".cell-status-running { color: #44cc44; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }\n"
-            + ".cell-status-lobby { color: #ffaa00; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }\n"
+            + ".cell-status-running { color: #44cc44; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }\n"
+            + ".cell-status-lobby { color: #ffaa00; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }\n"
             + ".cell-players .joined { color: #44cc44; }\n"
             + ".cell-players .waiting { color: #ffaa00; }\n"
-            + ".join-link { background: #003300; color: #88ee88; border: 1px solid #006600; padding: 4px 12px; text-decoration: none; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; white-space: nowrap; }\n"
+            + ".join-link { background: #003300; color: #88ee88; border: 1px solid #006600; padding: 4px 12px; text-decoration: none; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; white-space: nowrap; }\n"
             + ".join-link:hover { background: #004400; color: #aaffaa; }\n"
             + ".join-link.full { background: #1a1a1a; color: #555; border-color: #333; pointer-events: none; }\n"
 
             // Footer
             + ".footer { border-top: 1px solid #1a1a1a; padding-top: 14px; margin-top: 8px; }\n"
-            + ".footer-note { color: #333; font-size: 10px; letter-spacing: 1px; }\n"
+            + ".footer-note { color: #808080; font-size: 11px; letter-spacing: 1px; }\n"
+            + ".footer-note a { color: #9a9a9a; text-decoration: none; }\n"
+            + ".footer-note a:hover { color: #ddd; text-decoration: underline; }\n"
 
             // Copy flash
             + ".copied-flash { color: #44cc44; font-size: 10px; margin-left: 6px; opacity: 0; transition: opacity 0.2s; }\n"
@@ -124,24 +147,55 @@ public class DoomLandingPage {
             + "#authOverlay.visible { display:flex; }\n"
             + ".auth-box { background:#111; border:1px solid #3a0000; padding:40px 44px; text-align:center; max-width:340px; width:100%; }\n"
             + ".auth-title { color:#ff4444; font-size:14px; font-weight:bold; text-transform:uppercase; letter-spacing:4px; margin-bottom:8px; }\n"
-            + ".auth-sub { color:#555; font-size:11px; letter-spacing:1px; margin-bottom:24px; }\n"
+            + ".auth-sub { color:#9a9a9a; font-size:11px; letter-spacing:1px; margin-bottom:24px; }\n"
             + ".auth-input { width:100%; background:#0d0d0d; border:1px solid #383838; color:#c8c8c8; font-family:'Courier New',monospace; font-size:15px; letter-spacing:3px; padding:10px 14px; outline:none; text-align:center; margin-bottom:14px; }\n"
             + ".auth-input:focus { border-color:#ff4444; }\n"
             + ".auth-err { color:#c0392b; font-size:11px; min-height:16px; margin-top:6px; letter-spacing:1px; }\n"
+            + ".auth-owner { display:block; margin:18px auto 0; }\n"
+
+            // Owner modal (first-run setup, login, settings) — rendered by static/owner.js
+            + "#ownerModal { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.94); z-index:300; align-items:center; justify-content:center; overflow-y:auto; padding:24px 0; }\n"
+            + "#ownerModal.visible { display:flex; }\n"
+            + "#ownerBox { max-width:480px; text-align:left; margin:auto; }\n"
+            + "#ownerBox .auth-title { text-align:center; margin-bottom:14px; }\n"
+            + ".o-text { color:#b4b4b4; font-size:12px; line-height:1.5; margin-bottom:18px; }\n"
+            + ".o-input { width:100%; background:#0d0d0d; border:1px solid #383838; color:#c8c8c8; font-family:'Courier New',monospace; font-size:13px; padding:8px 10px; outline:none; }\n"
+            + ".o-input:focus { border-color:#ff4444; }\n"
+            + ".o-hint { color:#8c8c8c; font-size:11px; line-height:1.5; margin-top:5px; }\n"
+            + ".o-msg { color:#ff6b6b; font-size:12px; min-height:16px; margin:10px 0 4px; line-height:1.4; }\n"
+            + ".o-msg.ok { color:#88cc88; }\n"
+            + ".o-actions { display:flex; align-items:center; gap:18px; }\n"
+            + ".o-btn { width:auto; padding:10px 22px; margin-top:6px; }\n"
+            + ".o-link { background:none; border:none; color:#9a9a9a; font-family:'Courier New',monospace; font-size:12px; letter-spacing:1px; text-transform:uppercase; cursor:pointer; padding:6px 0; }\n"
+            + ".o-link:hover { color:#ddd; text-decoration:underline; }\n"
+            + ".o-small { display:block; margin:16px auto 0; text-transform:none; letter-spacing:0; }\n"
+            + ".o-section { color:#ff4444; font-size:12px; font-weight:bold; text-transform:uppercase; letter-spacing:3px; margin:22px 0 10px; padding-bottom:6px; border-bottom:1px solid #2a2a2a; }\n"
+            + ".o-check { display:flex; align-items:center; gap:8px; color:#c8c8c8; font-size:13px; margin-bottom:10px; cursor:pointer; }\n"
+            + ".o-check input { accent-color:#cc0000; width:15px; height:15px; }\n"
+            + ".o-row { display:flex; gap:8px; }\n"
+            + ".o-row .o-input { flex:1; letter-spacing:1px; }\n"
+            + ".o-small-btn { background:#1a1a1a; color:#ddd; border:1px solid #444; font-family:'Courier New',monospace; font-size:11px; letter-spacing:1px; text-transform:uppercase; padding:6px 12px; cursor:pointer; white-space:nowrap; }\n"
+            + ".o-small-btn:hover { border-color:#ff4444; color:#fff; }\n"
+            + ".o-footer { display:flex; justify-content:space-between; margin-top:24px; padding-top:10px; border-top:1px solid #2a2a2a; }\n"
+            + ".o-end-btn { background:#2a0000; color:#ffaaaa; border:1px solid #6b0000; font-family:'Courier New',monospace; font-size:10px; letter-spacing:1px; text-transform:uppercase; padding:3px 9px; margin-left:8px; cursor:pointer; }\n"
+            + ".o-end-btn:hover { background:#cc0000; color:#fff; }\n"
             + "</style></head>\n"
             + "<body>\n"
 
             // Auth overlay element
             + "<div id='authOverlay'>\n"
             + "  <div class='auth-box'>\n"
-            + "    <div class='auth-title'>&#128274; Access Required</div>\n"
-            + "    <div class='auth-sub'>Enter the play password to continue</div>\n"
+            + "    <div class='auth-title'>&#128274; Password Required</div>\n"
+            + "    <div class='auth-sub'>Enter the play password to start a game.<br>Joining a match only needs its match ID.</div>\n"
             + "    <input class='auth-input' type='password' id='authPw' placeholder='PASSWORD'\n"
-            + "           autocomplete='off' onkeydown='if(event.key===\"Enter\")submitAuth();'/>\n"
+            + "           autocomplete='off' onkeydown='if(event.key===\"Enter\")submitAuth();if(event.key===\"Escape\")hideAuthOverlay();'/>\n"
             + "    <button class='btn' onclick='submitAuth()'>Enter</button>\n"
             + "    <div class='auth-err' id='authErr'></div>\n"
+            + "    <button class='o-link auth-owner' onclick='hideAuthOverlay()'>Cancel</button>\n"
+            + "    <button class='o-link auth-owner' onclick='openOwnerSettings()'>Gateway owner? Open admin settings</button>\n"
             + "  </div>\n"
             + "</div>\n"
+            + "<div id='ownerModal'><div class='auth-box' id='ownerBox'></div></div>\n"
 
             // ── Header
             + "<div class='header'>\n"
@@ -150,6 +204,7 @@ public class DoomLandingPage {
             + "    <div class='header-text'>\n"
             + "      <div class='header-title'>Ignition DOOM</div>\n"
             + "      <div class='header-desc'>Perspective Gateway Module</div>\n"
+            + "      <div class='header-credit'>by <a href='https://github.com/DivCurl/ignition-doom' target='_blank' rel='noopener'>DivCurl</a></div>\n"
             + "    </div>\n"
             + "  </div>\n"
             // Branding row — dynamically populated from server-side file list; omitted if empty
@@ -159,10 +214,11 @@ public class DoomLandingPage {
             // ── Stats bar
             + "<div class='stats-bar'>\n"
             + "  <span class='stat-engines' id='engineStat'>"
-            + "Engines: <span class='used' id='usedEngines'>—</span><span style='color:#666'> / <span id='maxEngines'>—</span></span></span>\n"
+            + "Engines: <span class='used' id='usedEngines'>—</span><span style='color:#9a9a9a'> / <span id='maxEngines'>—</span></span></span>\n"
             + "  <span class='sep'>|</span>\n"
             + "  <span id='uptimeStat'>Uptime: —</span>\n"
             + "  <span class='stat-links'>\n"
+            + "    <a class='stat-link' href='#' id='settingsLink'>[Admin Settings]</a>\n"
             + "    <a class='stat-link' href='#' id='refreshLink'>[Refresh]</a>\n"
             + "  </span>\n"
             + "</div>\n"
@@ -210,7 +266,7 @@ public class DoomLandingPage {
             + "<option value='3'>3 Players</option>"
             + "<option value='4'>4 Players</option>"
             + "</select></div></div>\n"
-            + "    <div class='field'><label>Match ID <span style='color:#777;font-size:10px;letter-spacing:1px'>(OPTIONAL)</span></label>"
+            + "    <div class='field'><label>Match ID <span style='color:#9a9a9a;font-size:11px;letter-spacing:1px'>(OPTIONAL)</span></label>"
             + "<input type='text' id='dmMatchId' class='match-id-input' placeholder='e.g. FRAGFEST  \u2014 leave blank to auto-generate' maxlength='12'>"
             + "<div class='match-id-hint'>3\u201312 letters / numbers \u00b7 shared with other players to join</div></div>\n"
             + "    <button class='btn' id='dmBtn' onclick='createMatch()'>&#9760; Create Match</button>\n"
@@ -241,7 +297,8 @@ public class DoomLandingPage {
 
             // ── Footer
             + "<div class='footer'>"
-            + "<span class='footer-note'>IGNITION DOOM &nbsp;&middot;&nbsp; GNU GPL v3</span>"
+            + "<span class='footer-note'>IGNITION DOOM &nbsp;&middot;&nbsp; GNU GPL v3 &nbsp;&middot;&nbsp; "
+            + "<a href='https://github.com/DivCurl/ignition-doom' target='_blank' rel='noopener'>github.com/DivCurl/ignition-doom</a></span>"
             + "</div>\n"
 
             // ── Script
@@ -482,7 +539,7 @@ public class DoomLandingPage {
             + "      +\"<td class='cell-id' onclick='copyId(this,\\\"\"+esc(s.id)+\"\\\")' title='Click to copy'>\"+esc(s.id)+\"<span class='copied-flash'>Copied!</span></td>\"\n"
             + "      +\"<td class='cell-wad'>\"+esc(s.wad||'\\u2014')+\"</td>\"\n"
             + "      +\"<td class='cell-time'>\"+fmtMs(s.uptimeMs)+\"</td>\"\n"
-            + "      +\"<td><span class='cell-status-running'>&#9679; Running</span></td>\"\n"
+            + "      +\"<td><span class='cell-status-running'>&#9679; Running</span>\"+ownerEndButton('session',s.id)+\"</td>\"\n"
             + "      +\"</tr>\";\n"
             + "  }).join('');\n"
             + "}\n"
@@ -494,7 +551,7 @@ public class DoomLandingPage {
             + "  if(n===0){ tbody.innerHTML=\"<tr class='empty-row'><td colspan='6'>No active matches</td></tr>\"; return; }\n"
             + "  tbody.innerHTML=matches.map(function(m){\n"
             + "    var isFull=(m.joined>=m.players)||m.running;\n"
-            + "    var joinUrl='/system/doom/match/join?match='+encodeURIComponent(m.id)+'&wad='+encodeURIComponent(m.wad||'')+(_playToken?'&auth='+encodeURIComponent(_playToken):'');\n"
+            + "    var joinUrl='/system/doom/match/join?match='+encodeURIComponent(m.id)+'&wad='+encodeURIComponent(m.wad||'');\n"
             + "    var statusEl=m.running?\"<span class='cell-status-running'>&#9679; Running</span>\":\"<span class='cell-status-lobby'>&#9675; Lobby</span>\";\n"
             + "    var joinEl=isFull?\"<a class='join-link full'>Full</a>\":\"<a class='join-link' href='\"+joinUrl+\"' target='_blank'>Join</a>\";\n"
             + "    var pJoined=isFull?\"<span class='joined'>\"+m.joined+\"</span>\":\"<span class='waiting'>\"+m.joined+\"</span>\";\n"
@@ -504,7 +561,7 @@ public class DoomLandingPage {
             + "      +\"<td class='cell-players'>\"+pJoined+\" / \"+m.players+\"</td>\"\n"
             + "      +\"<td class='cell-time'>\"+fmtMs(m.uptimeMs)+\"</td>\"\n"
             + "      +\"<td>\"+statusEl+\"</td>\"\n"
-            + "      +\"<td>\"+joinEl+\"</td>\"\n"
+            + "      +\"<td>\"+joinEl+ownerEndButton('match',m.id)+\"</td>\"\n"
             + "      +\"</tr>\";\n"
             + "  }).join('');\n"
             + "}\n"
@@ -521,6 +578,8 @@ public class DoomLandingPage {
             + "}\n"
 
             + "function apply(h) {\n"
+            // Play-password setting changed (e.g. by the owner in another browser): re-check access.
+            + "  if(h.playAuthRequired!==window._playRequired&&window.ownerRefreshState) ownerRefreshState();\n"
             + "  populateWads(h.availableWads||[]);\n"
             + "  populatePwads(h.availablePwads||[]);\n"
             + "  renderSessions(h.sessions||[]);\n"
@@ -536,6 +595,7 @@ public class DoomLandingPage {
             + "}\n"
 
             + "function startSinglePlayer() {\n"
+            + "  if(needPlayPassword(startSinglePlayer)) return;\n"
             + "  var wad=document.getElementById('spWad').value;\n"
             + "  var pwad=document.getElementById('spPwad').value;\n"
             + "  var skill=document.getElementById('spSkill').value;\n"
@@ -551,6 +611,7 @@ public class DoomLandingPage {
             + "  window.open(url,'_blank');\n"
             + "}\n"
             + "function createMatch() {\n"
+            + "  if(needPlayPassword(createMatch)) return;\n"
             + "  var wad=document.getElementById('dmWad').value;\n"
             + "  var players=document.getElementById('dmPlayers').value;\n"
             + "  var pwad=document.getElementById('dmPwad').value;\n"
@@ -568,31 +629,45 @@ public class DoomLandingPage {
             + "  window.open(url,'_blank');\n"
             + "}\n"
 
-            // ── Auth overlay ────────────────────────────────────────────────────
+            // ── Play password prompt: shown only when starting a game (single-player or
+            //    creating a match) while a password is required. Joining a match needs no password.
             + "var _playToken=sessionStorage.getItem('doomPlayToken');\n"
-            + "function showAuthOverlay(){\n"
+            + "var _owner=false, _playRequired=false, _afterAuth=null;\n"
+            + "function ownerEndButton(){ return ''; }\n"   // replaced by owner.js once it loads
+            + "function needPlayPassword(action){\n"
+            + "  if(!_playRequired||_playToken||_owner) return false;\n"
+            + "  showAuthOverlay(action);\n"
+            + "  return true;\n"
+            + "}\n"
+            + "function showAuthOverlay(action){\n"
+            + "  _afterAuth=action||null;\n"
+            + "  document.getElementById('authErr').textContent='';\n"
             + "  document.getElementById('authOverlay').classList.add('visible');\n"
             + "  setTimeout(function(){ document.getElementById('authPw').focus(); },50);\n"
             + "}\n"
+            + "function hideAuthOverlay(){ _afterAuth=null; document.getElementById('authOverlay').classList.remove('visible'); }\n"
             + "function submitAuth(){\n"
             + "  var pw=document.getElementById('authPw').value;\n"
             + "  document.getElementById('authErr').textContent='';\n"
             + "  fetch('/system/doom/auth',{method:'POST',headers:{'Content-Type':'text/plain'},body:pw})\n"
-            + "    .then(function(r){ if(r.ok) return r.json(); throw new Error(); })\n"
+            + "    .then(function(r){ if(r.ok) return r.json(); throw new Error(r.status===429?'Too many attempts. Wait a few minutes.':'Incorrect password.'); })\n"
             + "    .then(function(d){\n"
             + "      _playToken=d.token;\n"
             + "      sessionStorage.setItem('doomPlayToken',_playToken);\n"
-            + "      document.getElementById('authOverlay').classList.remove('visible');\n"
+            + "      var next=_afterAuth;\n"
+            + "      hideAuthOverlay();\n"
             + "      document.getElementById('authPw').value='';\n"
+            + "      if(next) next();\n"   // continue the Start Game / Create Match that asked for it
             + "    })\n"
-            + "    .catch(function(){ document.getElementById('authErr').textContent='Incorrect password.'; document.getElementById('authPw').select(); });\n"
+            + "    .catch(function(e){ document.getElementById('authErr').textContent=e.message; document.getElementById('authPw').select(); });\n"
             + "}\n"
-            + "if(!_playToken) showAuthOverlay();\n"
             + "\n"
             + "document.getElementById('refreshLink').addEventListener('click',function(e){ e.preventDefault(); refresh(); });\n"
+            + "document.getElementById('settingsLink').addEventListener('click',function(e){ e.preventDefault(); openOwnerSettings(); });\n"
             + "refresh();\n"
             + "setInterval(refresh, 10000);\n"
             + "</script>\n"
+            + "<script src='/system/doom/static/owner.js?v=" + OWNER_JS_VERSION + "'></script>\n"
             + "</body></html>\n";
     }
 }

@@ -7,11 +7,15 @@
 # - Unsigned module support enabled
 # - Proper directory structure and permissions
 #
-# Usage:  scripts/setup-ignition-container.sh <container-name> [-y|--yes]
+# Usage:  scripts/setup-ignition-container.sh <container-name> [-y|--yes] [--allow-unsigned]
 #
 #   If a container with that name already exists it is DELETED and recreated
 #   (all gateway data in it is lost). You are asked to confirm unless -y is given.
 #   Set IGNITION_PORT to publish the gateway on a host port other than 8088.
+#
+#   Unsigned modules are NOT allowed by default: install the -signed.modl (see
+#   ignition-module/signing/). --allow-unsigned pre-sets the gateway to accept
+#   unsigned modules; scripts/set-unsigned-modules.sh changes it later.
 # ============================================================================
 
 set -e  # Exit on error
@@ -19,7 +23,7 @@ set -e  # Exit on error
 cd "$(dirname "$0")/.."          # asset paths below are relative to the repo root
 export MSYS_NO_PATHCONV=1     # Git Bash: don't rewrite container paths as Windows paths
 
-USAGE="Usage: scripts/setup-ignition-container.sh <container-name> [-y|--yes]"
+USAGE="Usage: scripts/setup-ignition-container.sh <container-name> [-y|--yes] [--allow-unsigned]"
 # Container name (mandatory first argument)
 if [ -z "$1" ] || [ "${1#-}" != "$1" ]; then
     echo "ERROR: Container name is required as the first argument."
@@ -29,9 +33,11 @@ fi
 CONTAINER_NAME="$1"
 shift
 ASSUME_YES=false
+ALLOW_UNSIGNED=false
 for arg in "$@"; do
     case "$arg" in
         -y|--yes) ASSUME_YES=true ;;
+        --allow-unsigned) ALLOW_UNSIGNED=true ;;
         *) echo "ERROR: Unknown option: $arg"; echo "$USAGE"; exit 1 ;;
     esac
 done
@@ -141,26 +147,25 @@ echo "      Running deploy-assets.sh to copy WADs, soundfonts, branding, and PWA
 echo ""
 bash scripts/deploy-assets.sh "$CONTAINER_NAME" || echo -e "      ${YELLOW}WARNING: Asset deployment reported errors - check output above.${NC}"
 
-# Step 6: Enable unsigned modules and set heap memory
+# Step 6: Gateway configuration (heap memory; unsigned modules only if requested)
 echo ""
-echo "[6/7] Enabling unsigned module installation and setting heap memory..."
-if docker exec "$CONTAINER_NAME" bash -c "echo 'wrapper.java.additional.9=-Dignition.allowunsignedmodules=true' >> /usr/local/bin/ignition/data/ignition.conf && echo 'wrapper.java.maxmemory=3072' >> /usr/local/bin/ignition/data/ignition.conf"; then
-    # Verify configuration
-    if docker exec "$CONTAINER_NAME" bash -c "grep 'allowunsignedmodules' /usr/local/bin/ignition/data/ignition.conf" >/dev/null 2>&1; then
-        echo -e "      ${GREEN}Unsigned modules enabled${NC}"
+echo "[6/7] Configuring gateway (heap memory, unsigned modules if set by config)..."
+if docker exec "$CONTAINER_NAME" bash -c "echo 'wrapper.java.maxmemory=3072' >> /usr/local/bin/ignition/data/ignition.conf && grep -q '^wrapper.java.maxmemory=3072' /usr/local/bin/ignition/data/ignition.conf"; then
+    echo -e "      ${GREEN}Heap memory set to 3072 MB${NC}"
+else
+    echo -e "      ${RED}ERROR: Failed to set heap memory${NC}"
+    exit 1
+fi
+if [ "$ALLOW_UNSIGNED" = "true" ]; then
+    if RESULT=$(docker exec -i "$CONTAINER_NAME" bash -s -- on < scripts/lib/unsigned-modules.sh); then
+        echo -e "      ${GREEN}Unsigned modules allowed${NC} ($RESULT)"
     else
-        echo -e "      ${RED}ERROR: Configuration verification failed${NC}"
-        exit 1
-    fi
-    if docker exec "$CONTAINER_NAME" bash -c "grep 'wrapper.java.maxmemory' /usr/local/bin/ignition/data/ignition.conf" >/dev/null 2>&1; then
-        echo -e "      ${GREEN}Heap memory set to 3072 MB${NC}"
-    else
-        echo -e "      ${RED}ERROR: Heap memory configuration verification failed${NC}"
+        echo -e "      ${RED}ERROR: Failed to allow unsigned modules${NC}"
         exit 1
     fi
 else
-    echo -e "      ${RED}ERROR: Failed to update configuration${NC}"
-    exit 1
+    echo "      Unsigned modules NOT allowed (default) - install the -signed.modl,"
+    echo "      or run: scripts/set-unsigned-modules.sh $CONTAINER_NAME on"
 fi
 
 # Step 7: Restart container to apply configuration

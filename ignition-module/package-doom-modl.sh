@@ -13,11 +13,32 @@
 # Signing: if signing/doom-signing.p12 (or $DOOM_SIGNING_KEYSTORE) exists, the module is also
 # signed via signing/sign-modl.sh. Create a keystore once with signing/new-signing-cert.sh.
 # Pass --no-sign to skip signing.
+#
+# Target Ignition line (--target):
+#   8.3   (default) requires Ignition 8.3.0+, as declared in module.xml
+#   2027  EXPERIMENTAL: declares Ignition 2027.2.0+ (2027.x gateways refuse 8.3-declared modules).
+#         Same compiled code as the 8.3 build (compiled against the 8.3 SDK); verified to run on
+#         2027.2.0-beta2, but not yet compile-validated against the 2027 SDK.
+#         Output: doom-perspective-vX.Y.Z-ign2027.modl (and -ign2027-signed.modl)
+#
+# Usage: bash ignition-module/package-doom-modl.sh [--no-sign] [--target 8.3|2027]
 
 set -e
 
+# Declared minimum Ignition version for the experimental 2027.x build.
+IGN2027_MIN_VERSION="2027.2.0"
+
 NO_SIGN=0
-[ "${1:-}" = "--no-sign" ] && NO_SIGN=1
+TARGET="8.3"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --no-sign) NO_SIGN=1 ;;
+        --target)  TARGET="${2:-}"; shift ;;
+        *) echo "ERROR: unknown option $1 (use --no-sign, --target 8.3|2027)" >&2; exit 1 ;;
+    esac
+    shift
+done
+case "$TARGET" in 8.3|2027) ;; *) echo "ERROR: --target must be 8.3 or 2027" >&2; exit 1 ;; esac
 
 command -v zip >/dev/null || { echo "ERROR: 'zip' not found - install it (e.g. apt install zip)." >&2; exit 1; }
 
@@ -32,15 +53,26 @@ if command -v xmllint &>/dev/null; then
 else
     VER=$(sed -n 's:.*<version>\(.*\)</version>.*:\1:p' "$SCRIPT_DIR/module.xml" | head -1)
 fi
+if [ "$TARGET" = "2027" ]; then
+    MIN_IGN="$IGN2027_MIN_VERSION"; SUFFIX="-ign2027"
+else
+    MIN_IGN=$(sed -n 's:.*<requiredIgnitionVersion>\(.*\)</requiredIgnitionVersion>.*:\1:p' "$SCRIPT_DIR/module.xml" | head -1)
+    SUFFIX=""
+fi
 
 echo ""
 echo "============================================================"
 echo "  DOOM Perspective Module Packager  v$VER"
 echo "============================================================"
+echo "  Target:  Ignition $TARGET (requires $MIN_IGN+)"
 echo "  Source:  $SRC"
 echo "  Stage:   $STAGE"
 echo "  Output:  $OUT"
 echo "============================================================"
+if [ "$TARGET" = "2027" ]; then
+    echo "  EXPERIMENTAL: 2027.x build. Same code as the 8.3 build with the declared version"
+    echo "  changed; runs on 2027.2.0-beta2 but is not compile-validated against the 2027 SDK."
+fi
 echo ""
 
 # Clean and create staging dir
@@ -58,12 +90,16 @@ cp "$SCRIPT_DIR/gateway/target/gateway.jar"                                    "
 HR_VER=$(sed -n 's:^    <version>\(.*\)</version>.*:\1:p' "$SRC/headless-renderer/pom.xml" | head -1)
 cp "$SRC/headless-renderer/target/headless-renderer-$HR_VER.jar"               "$STAGE/headless-renderer.jar"
 
+# Target line: set the declared minimum Ignition version in the STAGED module.xml only
+sed -i.bak "s:<requiredIgnitionVersion>[^<]*</requiredIgnitionVersion>:<requiredIgnitionVersion>$MIN_IGN</requiredIgnitionVersion>:" "$STAGE/module.xml"
+rm -f "$STAGE/module.xml.bak"
+
 echo "Staged files:"
 ls -lh "$STAGE"
 
 # Zip staged files and copy as .modl
-ZIP="/tmp/doom-perspective-v$VER.zip"
-MODL="$OUT/doom-perspective-v$VER.modl"
+ZIP="/tmp/doom-perspective-v$VER$SUFFIX.zip"
+MODL="$OUT/doom-perspective-v$VER$SUFFIX.modl"
 
 rm -f "$ZIP" "$MODL" "${MODL%.modl}-signed.modl"   # never leave a stale signed build behind
 (cd "$STAGE" && zip -q "$ZIP" *)

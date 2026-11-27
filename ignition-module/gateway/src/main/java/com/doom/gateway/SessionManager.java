@@ -22,13 +22,9 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.net.URL;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -67,15 +63,19 @@ public class SessionManager {
         logger.info("Max sessions changed: {} → {}", old, n);
     }
     public static final long   IDLE_TIMEOUT_MS = 10L * 60 * 1000;  // 10 minutes
-    public static final String BASE_DIR        = "/usr/local/bin/ignition/user-lib/doom/";
-    public static final String WAD_DIR         = BASE_DIR + "iwads/";
-    public static final String PWAD_DIR        = BASE_DIR + "pwads/";
     public static final String DEFAULT_WAD     = "DOOM1";
 
+    // Asset folders, derived from the gateway's own user-lib directory so they are correct on
+    // any OS and install location (e.g. /usr/local/bin/ignition/user-lib/doom/ in Docker,
+    // "C:/Program Files/Inductive Automation/Ignition/user-lib/doom/" on Windows).
+    // Each ends with the platform separator so it can be used as a path prefix.
+    private final String baseDir;   // <user-lib>/doom/
+    private final String wadDir;    // <user-lib>/doom/iwads/
+    private final String pwadDir;   // <user-lib>/doom/pwads/
+
     private final URL    headlessRendererJar;
-    private final String adminToken;
-    private volatile String playPassword;
-    private final ConcurrentHashMap<String, Boolean> playTokens = new ConcurrentHashMap<>();
+    /** Master/play passwords and persisted settings (doom-settings.properties in baseDir). */
+    private final AccessControl access;
     private final ConcurrentHashMap<String, DoomSession>          sessions   = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, MatchSession>         matches    = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Map<String, byte[]>>  soundCaches        = new ConcurrentHashMap<>();
@@ -88,29 +88,20 @@ public class SessionManager {
      * Creates the SessionManager. Stores the renderer JAR URL and starts the reaper.
      * Does NOT start any DOOM engine.
      */
-    public SessionManager(URL headlessRendererJar) {
+    public SessionManager(URL headlessRendererJar, File doomDir) {
         this.headlessRendererJar = headlessRendererJar;
+        this.baseDir = withSeparator(doomDir);
+        this.wadDir  = withSeparator(new File(doomDir, "iwads"));
+        this.pwadDir = withSeparator(new File(doomDir, "pwads"));
 
-        SecureRandom rng = new SecureRandom();
-
-        // Generate a random 16-hex-char admin token. Printed once to the gateway log
-        // so the administrator can read it and use it to access /system/doom/admin.
-        byte[] tokenBytes = new byte[8];
-        rng.nextBytes(tokenBytes);
-        this.adminToken = bytesToHex(tokenBytes);
-
-        // Generate a random 12-hex-char play password. Required by browser clients to
-        // start or join any game session. Printed once to the gateway log on startup.
-        byte[] pwBytes = new byte[6];
-        rng.nextBytes(pwBytes);
-        this.playPassword = bytesToHex(pwBytes).toUpperCase();
+        // Loads persisted settings (may change max sessions) and logs the setup code.
+        this.access = new AccessControl(new File(baseDir, "doom-settings.properties"));
 
         logger.info("SessionManager init — headless-renderer.jar: {}", headlessRendererJar);
-        logger.info("SessionManager init — WAD directory:          {}", WAD_DIR);
+        logger.info("SessionManager init — asset directory:        {}", baseDir);
+        logger.info("SessionManager init — WAD directory:          {}", wadDir);
         logger.info("SessionManager init — max sessions:           {}", getMaxSessions());
         logger.info("SessionManager init — idle timeout:           {} ms", IDLE_TIMEOUT_MS);
-        logger.info("DOOM Admin token:    {}  (use at /system/doom/admin?token=...)", adminToken);
-        logger.info("DOOM Play password:  {}  (required to start/join games at /system/doom)", playPassword);
 
         reaper = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "DOOM-SessionReaper");
@@ -164,7 +155,7 @@ public class SessionManager {
         String wadPath = resolveWad(wadName != null ? wadName : DEFAULT_WAD);
         if (wadPath == null) {
             throw new IllegalArgumentException("WAD not found: " + wadName
-                + " (expected in " + WAD_DIR + ")");
+                + " (expected in " + wadDir + ")");
         }
 
         // Resolve optional PWAD path
@@ -241,7 +232,7 @@ public class SessionManager {
 
         String wadPath = resolveWad(wadName != null ? wadName : DEFAULT_WAD);
         if (wadPath == null) {
-            throw new IllegalArgumentException("WAD not found: " + wadName + " (expected in " + WAD_DIR + ")");
+            throw new IllegalArgumentException("WAD not found: " + wadName + " (expected in " + wadDir + ")");
         }
 
         // Resolve optional PWAD path
@@ -381,9 +372,9 @@ public class SessionManager {
 
         // List available WADs
         List<String> wads = new ArrayList<>();
-        File wadDir = new File(WAD_DIR);
-        if (wadDir.isDirectory()) {
-            File[] files = wadDir.listFiles();
+        File wadFolder = new File(wadDir);
+        if (wadFolder.isDirectory()) {
+            File[] files = wadFolder.listFiles();
             if (files != null) {
                 for (File f : files) {
                     if (f.getName().toLowerCase().endsWith(".wad")) wads.add(f.getName());
@@ -393,9 +384,9 @@ public class SessionManager {
 
         // List available PWADs
         List<String> pwads = new ArrayList<>();
-        File pwadDir = new File(PWAD_DIR);
-        if (pwadDir.isDirectory()) {
-            File[] pwadFiles = pwadDir.listFiles();
+        File pwadFolder = new File(pwadDir);
+        if (pwadFolder.isDirectory()) {
+            File[] pwadFiles = pwadFolder.listFiles();
             if (pwadFiles != null) {
                 for (File f : pwadFiles) {
                     String lower = f.getName().toLowerCase();
@@ -413,8 +404,9 @@ public class SessionManager {
         json.append("\"uptimeSeconds\":").append(uptimeSec).append(",");
         json.append("\"activeSessions\":").append(active.size()).append(",");
         json.append("\"maxSessions\":").append(getMaxSessions()).append(",");
+        json.append("\"playAuthRequired\":").append(access.isPlayRequired()).append(",");
         json.append("\"headlessRendererJar\":\"").append(esc(headlessRendererJar.toString())).append("\",");
-        json.append("\"wadDirectory\":\"").append(esc(WAD_DIR)).append("\",");
+        json.append("\"wadDirectory\":\"").append(esc(wadDir)).append("\",");
         json.append("\"availableWads\":[");
         for (int i = 0; i < wads.size(); i++) {
             if (i > 0) json.append(",");
@@ -425,7 +417,7 @@ public class SessionManager {
         for (int i = 0; i < pwads.size(); i++) {
             if (i > 0) json.append(",");
             String pwadName = pwads.get(i);
-            WadInspector.WadInfo info = WadInspector.inspect(new java.io.File(PWAD_DIR, pwadName));
+            WadInspector.WadInfo info = WadInspector.inspect(new java.io.File(pwadDir, pwadName));
             json.append("{\"name\":\"").append(esc(pwadName)).append("\"");
             if (info.iwad     != null) json.append(",\"iwad\":\"").append(esc(info.iwad)).append("\"");
             if (info.firstMap != null) json.append(",\"firstMap\":\"").append(esc(info.firstMap)).append("\"");
@@ -492,7 +484,7 @@ public class SessionManager {
     // ── Private helpers ───────────────────────────────────────────────────────
 
     /**
-     * Resolves a WAD name to an absolute file path in WAD_DIR.
+     * Resolves a WAD name to an absolute file path in wadDir.
      * Tries: NAME.WAD, name.wad (case-insensitive fallback).
      * Returns null if not found.
      */
@@ -501,9 +493,9 @@ public class SessionManager {
         wadName = wadName.replaceAll("[/\\\\]", "").trim();
         if (wadName.isEmpty()) return null;
 
-        File dir = new File(WAD_DIR);
+        File dir = new File(wadDir);
         if (!dir.isDirectory()) {
-            logger.warn("WAD directory not found: {}", WAD_DIR);
+            logger.warn("WAD directory not found: {}", wadDir);
             return null;
         }
 
@@ -530,14 +522,14 @@ public class SessionManager {
             }
         }
 
-        logger.warn("WAD not found: '{}' in {}", wadName, WAD_DIR);
+        logger.warn("WAD not found: '{}' in {}", wadName, wadDir);
         return null;
     }
 
     /**
-     * Resolves a PWAD filename to an absolute file path in PWAD_DIR.
+     * Resolves a PWAD filename to an absolute file path in pwadDir.
      * Accepts the full filename including extension (e.g. "mypwad.wad", "cool.pk3").
-     * Returns null if not found or if PWAD_DIR doesn't exist.
+     * Returns null if not found or if pwadDir doesn't exist.
      */
     private String resolvePwad(String pwadFilename) {
         if (pwadFilename == null || pwadFilename.isBlank()) return null;
@@ -545,9 +537,9 @@ public class SessionManager {
         pwadFilename = pwadFilename.replaceAll("[/\\\\]", "").trim();
         if (pwadFilename.isEmpty()) return null;
 
-        File dir = new File(PWAD_DIR);
+        File dir = new File(pwadDir);
         if (!dir.isDirectory()) {
-            logger.debug("PWAD directory not found: {}", PWAD_DIR);
+            logger.debug("PWAD directory not found: {}", pwadDir);
             return null;
         }
 
@@ -569,7 +561,7 @@ public class SessionManager {
             }
         }
 
-        logger.warn("PWAD not found: '{}' in {}", pwadFilename, PWAD_DIR);
+        logger.warn("PWAD not found: '{}' in {}", pwadFilename, pwadDir);
         return null;
     }
 
@@ -695,60 +687,18 @@ public class SessionManager {
         }
     }
 
-    /**
-     * Validates an admin token using a timing-safe comparison.
-     * Returns false if the token is null, empty, or incorrect.
-     */
-    public boolean validateAdminToken(String token) {
-        if (token == null || token.isEmpty()) return false;
-        return MessageDigest.isEqual(
-            token.getBytes(StandardCharsets.UTF_8),
-            adminToken.getBytes(StandardCharsets.UTF_8)
-        );
-    }
+    /** Master password, optional play password, and persisted settings. */
+    public AccessControl getAccess() { return access; }
 
-    /** Returns the admin token (used by servlet to embed it in redirect URLs). */
-    public String getAdminToken() { return adminToken; }
+    /** Asset root (user-lib/doom/, with trailing separator): iwads, pwads, soundfonts, branding. */
+    public String getBaseDir() { return baseDir; }
 
-    /** Returns the play password (displayed on the admin page). */
-    public String getPlayPassword() { return playPassword; }
+    /** IWAD folder (user-lib/doom/iwads/, with trailing separator). */
+    public String getWadDir() { return wadDir; }
 
-    /** Validates a play password supplied by the browser. Timing-safe comparison. */
-    public boolean validatePlayPassword(String pw) {
-        if (pw == null || pw.isEmpty()) return false;
-        return MessageDigest.isEqual(
-            pw.toUpperCase().getBytes(StandardCharsets.UTF_8),
-            playPassword.getBytes(StandardCharsets.UTF_8)
-        );
-    }
-
-    /**
-     * Issues a play token after successful password validation.
-     * Tokens remain valid until {@link #regeneratePlayPassword()} is called.
-     */
-    public String issuePlayToken() {
-        String token = UUID.randomUUID().toString().replace("-", "");
-        playTokens.put(token, Boolean.TRUE);
-        return token;
-    }
-
-    /** Returns true if the token was issued by this manager and has not been revoked. */
-    public boolean validatePlayToken(String token) {
-        if (token == null || token.isEmpty()) return false;
-        return playTokens.containsKey(token);
-    }
-
-    /**
-     * Generates a new play password and revokes all existing play tokens.
-     * Returns the new password so the caller can display or log it.
-     */
-    public String regeneratePlayPassword() {
-        byte[] pwBytes = new byte[6];
-        new SecureRandom().nextBytes(pwBytes);
-        playPassword = bytesToHex(pwBytes).toUpperCase();
-        playTokens.clear();
-        logger.info("DOOM Play password regenerated: {}  (all existing tokens revoked)", playPassword);
-        return playPassword;
+    private static String withSeparator(File dir) {
+        String p = dir.getAbsolutePath();
+        return p.endsWith(File.separator) ? p : p + File.separator;
     }
 
     /** Returns seconds elapsed since this SessionManager was created. */
@@ -785,11 +735,5 @@ public class SessionManager {
     private static String esc(String s) {
         if (s == null) return "";
         return s.replace("\\", "\\\\").replace("\"", "\\\"");
-    }
-
-    private static String bytesToHex(byte[] bytes) {
-        StringBuilder sb = new StringBuilder(bytes.length * 2);
-        for (byte b : bytes) sb.append(String.format("%02x", b));
-        return sb.toString();
     }
 }

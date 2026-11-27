@@ -68,6 +68,6 @@ echo ====================================
 echo SDK Installation Complete!
 echo ====================================
 echo.
-echo You can now build the module - see "Build the module" in README.md.
+echo You can now build the module - see docs\building.md.
 echo.
 pause

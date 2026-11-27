@@ -40,7 +40,7 @@ public class GatewayHook extends AbstractGatewayModuleHook {
 
     private static final Logger logger = LoggerFactory.getLogger("DOOM.GatewayHook");
 
-    private static final String MODULE_VERSION = "0.9.8";
+    private static final String MODULE_VERSION = "1.0.0";
 
     private GatewayContext gatewayContext;
     private static volatile SessionManager sessionManager;  // static for servlet access
@@ -63,7 +63,10 @@ public class GatewayHook extends AbstractGatewayModuleHook {
         try {
             URL rendererJar = findHeadlessRendererJar();
             logger.info("DOOM: headless-renderer.jar resolved: {}", rendererJar);
-            sessionManager = new SessionManager(rendererJar);
+            // Assets (WADs, soundfonts, branding, settings) live in <gateway user-lib>/doom/,
+            // wherever this gateway is installed (Docker, Linux, Windows, macOS).
+            File doomDir = new File(gatewayContext.getSystemManager().getUserLibDir(), "doom");
+            sessionManager = new SessionManager(rendererJar, doomDir);
             logger.info("DOOM: SessionManager ready");
         } catch (Exception e) {
             // Log but DO NOT rethrow — module loads even if SessionManager fails.
@@ -136,11 +139,14 @@ public class GatewayHook extends AbstractGatewayModuleHook {
     /**
      * Locates headless-renderer.jar using three fallback strategies.
      *
-     * Strategy 1: Code-source of gateway.jar → sibling headless-renderer.jar
+     * Ignition 8.3 caches module JARs with a numeric prefix
+     * (e.g. __1187828908__headless-renderer.jar), so name matching is by suffix.
+     *
+     * Strategy 1: Code-source of gateway.jar → sibling *headless-renderer.jar
      *   Works in Ignition's jar-cache where all module JARs live side-by-side.
      *
-     * Strategy 2: Known Ignition jar-cache path
-     *   Hardcoded fallback for the standard container path.
+     * Strategy 2: The gateway's jar-cache for this module
+     *   <data dir>/jar-cache/com.doom.perspective/, from the gateway's own data directory.
      *
      * Strategy 3: Scan parent URLClassLoader URLs
      *   Works if Ignition uses a URLClassLoader for the module (8.x sometimes does).
@@ -157,25 +163,30 @@ public class GatewayHook extends AbstractGatewayModuleHook {
             File jarDir = new File(gatewayJarUrl.toURI()).getParentFile();
             logger.debug("DOOM: searching for headless-renderer.jar in: {}", jarDir);
 
-            File candidate = new File(jarDir, "headless-renderer.jar");
-            if (candidate.exists()) {
+            File candidate = findRendererJarIn(jarDir);
+            if (candidate != null) {
                 logger.info("DOOM: [Strategy 1] found headless-renderer.jar at: {}", candidate.getAbsolutePath());
                 return candidate.toURI().toURL();
             }
-            logger.debug("DOOM: [Strategy 1] not found at {}", candidate.getAbsolutePath());
+            logger.debug("DOOM: [Strategy 1] not found in {}", jarDir);
         } catch (Exception e) {
             logger.warn("DOOM: [Strategy 1] failed: {}", e.getMessage());
         }
 
-        // Strategy 2: hardcoded Ignition jar-cache path
-        String cachePath = "/usr/local/bin/ignition/data/jar-cache/com.doom.perspective/";
-        File cacheJar = new File(cachePath, "headless-renderer.jar");
-        logger.debug("DOOM: [Strategy 2] trying: {}", cacheJar.getAbsolutePath());
-        if (cacheJar.exists()) {
-            logger.info("DOOM: [Strategy 2] found headless-renderer.jar at: {}", cacheJar.getAbsolutePath());
-            return cacheJar.toURI().toURL();
+        // Strategy 2: this module's folder in the gateway's jar-cache
+        File cacheDir = null;
+        try {
+            cacheDir = new File(new File(gatewayContext.getSystemManager().getDataDir(), "jar-cache"),
+                "com.doom.perspective");
+            File cacheJar = findRendererJarIn(cacheDir);
+            if (cacheJar != null) {
+                logger.info("DOOM: [Strategy 2] found headless-renderer.jar at: {}", cacheJar.getAbsolutePath());
+                return cacheJar.toURI().toURL();
+            }
+            logger.debug("DOOM: [Strategy 2] not found in {}", cacheDir);
+        } catch (Exception e) {
+            logger.warn("DOOM: [Strategy 2] failed: {}", e.getMessage());
         }
-        logger.debug("DOOM: [Strategy 2] not found at {}", cacheJar.getAbsolutePath());
 
         // Strategy 3: scan ClassLoader URLs
         ClassLoader cl = GatewayHook.class.getClassLoader();
@@ -195,6 +206,16 @@ public class GatewayHook extends AbstractGatewayModuleHook {
 
         throw new RuntimeException(
             "Cannot locate headless-renderer.jar. Tried: sibling of gateway.jar, "
-            + cachePath + ", URLClassLoader URL scan. Check module installation.");
+            + cacheDir + ", URLClassLoader URL scan. Check module installation.");
+    }
+
+    /** Newest *headless-renderer.jar in a folder (the jar-cache adds a numeric prefix), or null. */
+    private static File findRendererJarIn(File dir) {
+        File[] matches = dir == null ? null
+            : dir.listFiles((d, name) -> name.endsWith("headless-renderer.jar"));
+        if (matches == null || matches.length == 0) return null;
+        File newest = matches[0];
+        for (File f : matches) if (f.lastModified() > newest.lastModified()) newest = f;
+        return newest;
     }
 }

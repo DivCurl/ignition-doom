@@ -55,18 +55,31 @@ import java.util.Set;
  * GET  /system/doom/static/{file}               — bundled static assets (no session)
  * POST /system/doom/input?session=UUID          — pressed key state from browser JS
  * POST /system/doom/console?session=UUID        — warp/cheat console command
+ *
+ * Access control (see {@link AccessControl}):
+ * POST /system/doom/auth                        — play password → play token (only if one is required)
+ * GET  /system/doom/owner/state                 — setup/login/play-password state for the dashboard
+ * POST /system/doom/owner/{setup|login|logout|password|settings|generate|end}
+ *                                               — owner actions; same-origin, cookie session
+ * GET  /system/doom/admin                       — legacy URL, redirects to the dashboard's Settings
  */
 public class DoomInputServlet extends HttpServlet {
 
     private static final Logger logger = LoggerFactory.getLogger("DOOM.Servlet");
 
-    /** Soundfont instrument JS files on the container filesystem (populated by setup script). */
-    private static final String SOUNDFONTS_DIR =
-        "/usr/local/bin/ignition/user-lib/doom/soundfonts/";
+    /**
+     * An asset sub-folder of the gateway's user-lib/doom/ directory ("soundfonts", "branding"),
+     * resolved from the gateway's real install location; null until the module has initialized.
+     */
+    private static File assetDir(String name) {
+        SessionManager sm = GatewayHook.getSessionManager();
+        return sm == null ? null : new File(sm.getBaseDir(), name);
+    }
 
-    /** Branding image assets on the container filesystem (populated by setup script). */
-    private static final String BRANDING_DIR =
-        "/usr/local/bin/ignition/user-lib/doom/branding/";
+    /** True for a plain file name: no path separators of either OS and no parent references. */
+    private static boolean isPlainFileName(String name) {
+        return !name.isEmpty() && !name.contains("..") && !name.contains("/") && !name.contains("\\");
+    }
 
     // ── GET dispatcher ────────────────────────────────────────────────────────
 
@@ -74,6 +87,14 @@ public class DoomInputServlet extends HttpServlet {
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         String path = req.getPathInfo();
         if (path == null) path = "/";
+
+        // Owner endpoints first: route matching below uses contains(), and "/owner/..."
+        // paths must never fall through to e.g. the "play" route.
+        String ownerAction = ownerAction(path);
+        if (ownerAction != null) {
+            handleOwnerGet(ownerAction, req, resp);
+            return;
+        }
 
         if (path.contains("static/")) {
             String fileName = path.substring(path.indexOf("static/") + "static/".length());
@@ -83,14 +104,9 @@ public class DoomInputServlet extends HttpServlet {
             String sfName = path.substring(path.indexOf("music/sf/") + "music/sf/".length());
             serveSoundfontFile(sfName, resp);
 
-        } else if (path.contains("admin/kill")) {
-            serveAdminKill(req, resp);
-
-        } else if (path.contains("admin/config")) {
-            serveAdminConfig(req, resp);
-
         } else if (path.contains("admin")) {
-            serveAdminPage(req, resp);
+            // The token-in-URL admin page was replaced by the dashboard's Settings panel.
+            resp.sendRedirect("/system/doom/?settings=1");
 
         } else if (path.contains("health")) {
             serveHealth(resp);
@@ -177,17 +193,20 @@ public class DoomInputServlet extends HttpServlet {
 
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        resp.setHeader("Access-Control-Allow-Origin", "*");
-
         String path = req.getPathInfo();
         if (path == null) path = "/";
 
+        // Owner endpoints: same-origin only (no CORS header, Origin checked), handled first.
+        String ownerAction = ownerAction(path);
+        if (ownerAction != null) {
+            handleOwnerPost(ownerAction, req, resp);
+            return;
+        }
+
+        resp.setHeader("Access-Control-Allow-Origin", "*");
+
         if (path.contains("/match")) {
             handleMatchPost(path, req, resp);
-        } else if (path.contains("admin/regen")) {
-            serveAdminRegen(req, resp);
-        } else if (path.contains("admin/config")) {
-            serveAdminConfig(req, resp);
         } else if (path.contains("auth")) {
             handlePlayAuth(req, resp);
         } else if (path.contains("console")) {
@@ -225,20 +244,33 @@ public class DoomInputServlet extends HttpServlet {
 
     /**
      * POST /system/doom/auth  (body: plain-text password)
-     * Validates the play password and returns a short-lived play token as JSON.
-     * 200 {"token":"<hex>"} on success, 401 on bad password, 503 if not ready.
+     * Checks the play password and returns a play token as JSON.
+     * 200 {"token":"<hex>"} on success, 401 on a wrong password, 429 after too many
+     * failures, 503 if not ready. When no play password is required, any request
+     * succeeds (older pages may still call this).
      */
     private void handlePlayAuth(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         resp.setHeader("Cache-Control", "no-store");
         SessionManager sm = GatewayHook.getSessionManager();
         if (sm == null) { resp.setStatus(503); return; }
+        AccessControl ac = sm.getAccess();
+        // Separate throttle buckets: behind NAT/Docker every client shares one address, so
+        // players mistyping the play password must not lock the owner out (and vice versa).
+        String addr = "play:" + req.getRemoteAddr();
+        if (ac.isPlayRequired() && ac.isLockedOut(addr)) {
+            resp.setStatus(429);
+            resp.setContentType("text/plain");
+            resp.getWriter().write("Too many attempts - wait a few minutes and try again");
+            return;
+        }
 
         String body = new String(req.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
-        if (sm.validatePlayPassword(body)) {
-            String token = sm.issuePlayToken();
+        if (!ac.isPlayRequired() || ac.verifyPlayPassword(body)) {
+            ac.clearFailures(addr);
             resp.setContentType("application/json");
-            resp.getWriter().write("{\"token\":\"" + token + "\"}");
+            resp.getWriter().write("{\"token\":\"" + ac.issuePlayToken() + "\"}");
         } else {
+            ac.recordFailure(addr);
             resp.setStatus(401);
             resp.setContentType("text/plain");
             resp.getWriter().write("Incorrect password");
@@ -246,20 +278,220 @@ public class DoomInputServlet extends HttpServlet {
     }
 
     /**
-     * Validates the ?auth= play token on a request.
-     * Writes 403 and returns false if the token is missing or invalid.
+     * Enforces the play password (if one is required) for pages that START games:
+     * single-player (/play) and creating a match. Joining a match needs only its ID.
+     * A logged-in owner (cookie) is always allowed. These are browser navigations, so a
+     * refusal is a small HTML page pointing back to the dashboard.
      */
     private boolean checkPlayAuth(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         SessionManager sm = GatewayHook.getSessionManager();
         if (sm == null) { resp.setStatus(503); return false; }
-        String token = req.getParameter("auth");
-        if (!sm.validatePlayToken(token)) {
-            resp.setStatus(403);
-            resp.setContentType("application/json");
-            resp.getWriter().write("{\"error\":\"auth_required\"}");
+        AccessControl ac = sm.getAccess();
+        if (ac.playAllowed(req.getParameter("auth")) || ac.isOwner(ownerCookie(req))) return true;
+        resp.setStatus(403);
+        resp.setContentType("text/html; charset=UTF-8");
+        resp.setHeader("Cache-Control", "no-store");
+        resp.getWriter().write("<!DOCTYPE html><html><head><meta charset='UTF-8'>"
+            + "<title>DOOM — Password required</title></head>"
+            + "<body style='background:#0d0d0d;color:#c8c8c8;font-family:monospace;padding:24px'>"
+            + "<h2 style='color:#ff4444;letter-spacing:3px'>PASSWORD REQUIRED</h2>"
+            + "<p>This gateway requires a play password. Open the "
+            + "<a href='/system/doom/' style='color:#ff6b6b'>Ignition DOOM dashboard</a>, "
+            + "enter the password, then start or join the game again.</p>"
+            + "</body></html>");
+        return false;
+    }
+
+    // ── /owner/* — master password, first-run setup, settings ───────────────
+
+    private static final String OWNER_COOKIE = "doomOwner";
+
+    /**
+     * Returns the action name for /system/doom/owner/{action} requests, else null.
+     * Ignition includes the servlet name in getPathInfo(), so the path arrives as
+     * "/doom/owner/state"; plain "/owner/state" is accepted too.
+     */
+    private static String ownerAction(String path) {
+        String p = path.startsWith("/doom/") ? path.substring("/doom".length()) : path;
+        return p.startsWith("/owner/") ? p.substring("/owner/".length()) : null;
+    }
+
+    /** GET /owner/state[?auth=TOKEN] — what the dashboard needs to decide which prompts to show. */
+    private void handleOwnerGet(String action, HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        resp.setHeader("Cache-Control", "no-store");
+        SessionManager sm = GatewayHook.getSessionManager();
+        if (sm == null) { resp.setStatus(503); return; }
+        if (!action.equals("state")) { resp.setStatus(404); return; }
+        AccessControl ac = sm.getAccess();
+        boolean owner = ac.isOwner(ownerCookie(req));
+        // A logged-in owner never has to type the play password (checkPlayAuth accepts the cookie).
+        boolean tokenValid = owner || ac.playAllowed(req.getParameter("auth"));
+        StringBuilder j = new StringBuilder("{");
+        j.append("\"setupRequired\":").append(!ac.isSetUp());
+        j.append(",\"owner\":").append(owner);
+        j.append(",\"playRequired\":").append(ac.isPlayRequired());
+        j.append(",\"playTokenValid\":").append(tokenValid);
+        j.append(",\"persistent\":").append(ac.isPersistent());
+        if (owner) {
+            j.append(",\"playPassword\":").append(jsonStr(ac.getPlayPassword()));
+            j.append(",\"maxSessions\":").append(SessionManager.getMaxSessions());
+        }
+        j.append("}");
+        resp.setContentType("application/json; charset=UTF-8");
+        resp.getWriter().write(j.toString());
+    }
+
+    /**
+     * POST /owner/{setup|login|logout|password|settings|end|generate}, form-encoded.
+     * Responds with JSON: {"ok":true,...} or {"error":"message"}.
+     */
+    private void handleOwnerPost(String action, HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        resp.setHeader("Cache-Control", "no-store");
+        SessionManager sm = GatewayHook.getSessionManager();
+        if (sm == null) { resp.setStatus(503); return; }
+        if (!isSameOrigin(req)) { ownerJson(resp, 403, "Cross-origin request rejected."); return; }
+        AccessControl ac = sm.getAccess();
+        String addr = "owner:" + req.getRemoteAddr();
+
+        switch (action) {
+            case "setup": {   // set (first run) or reset (forgotten) the master password with the setup code
+                if (ac.isLockedOut(addr)) { ownerJson(resp, 429, "Too many attempts - wait a few minutes."); return; }
+                String err = ac.setMasterWithSetupCode(req.getParameter("code"), req.getParameter("password"));
+                if (err != null && err.startsWith("Incorrect")) { ac.recordFailure(addr); ownerJson(resp, 401, err); return; }
+                if (err != null && !AccessControl.isSaveWarning(err)) { ownerJson(resp, 400, err); return; }
+                ac.clearFailures(addr);
+                setOwnerCookie(req, resp, ac.createOwnerSession());
+                ownerOk(resp, err);
+                return;
+            }
+            case "login": {
+                if (!ac.isSetUp()) { ownerJson(resp, 409, "No master password has been set yet."); return; }
+                if (ac.isLockedOut(addr)) { ownerJson(resp, 429, "Too many attempts - wait a few minutes."); return; }
+                if (!ac.verifyMaster(req.getParameter("password"))) {
+                    ac.recordFailure(addr);
+                    ownerJson(resp, 401, "Incorrect password.");
+                    return;
+                }
+                ac.clearFailures(addr);
+                setOwnerCookie(req, resp, ac.createOwnerSession());
+                ownerOk(resp, null);
+                return;
+            }
+            case "logout":
+                ac.endOwnerSession(ownerCookie(req));
+                clearOwnerCookie(req, resp);
+                ownerOk(resp, null);
+                return;
+            default:
+                break;
+        }
+
+        // Everything below needs a logged-in owner.
+        if (!ac.isOwner(ownerCookie(req))) { ownerJson(resp, 401, "Not logged in."); return; }
+
+        switch (action) {
+            case "password": {
+                if (ac.isLockedOut(addr)) { ownerJson(resp, 429, "Too many attempts - wait a few minutes."); return; }
+                String err = ac.changeMaster(req.getParameter("current"), req.getParameter("password"));
+                if (err != null && err.startsWith("Current")) { ac.recordFailure(addr); ownerJson(resp, 401, err); return; }
+                if (err != null && !AccessControl.isSaveWarning(err)) { ownerJson(resp, 400, err); return; }
+                ac.clearFailures(addr);
+                setOwnerCookie(req, resp, ac.createOwnerSession());   // other sessions were logged out
+                ownerOk(resp, err);
+                return;
+            }
+            case "settings": {
+                String maxStr = req.getParameter("maxSessions");
+                if (maxStr != null) {
+                    try { SessionManager.setMaxSessions(Integer.parseInt(maxStr.trim())); }
+                    catch (NumberFormatException e) { ownerJson(resp, 400, "Max engines must be a number."); return; }
+                }
+                String required = req.getParameter("playRequired");
+                String pw = req.getParameter("playPassword");
+                if (pw != null && pw.isBlank()) pw = null;
+                String err = required != null
+                    ? ac.updatePlay(Boolean.parseBoolean(required), pw)
+                    : ac.save();
+                if (err != null && !AccessControl.isSaveWarning(err)) { ownerJson(resp, 400, err); return; }
+                ownerOk(resp, err);
+                return;
+            }
+            case "generate":
+                resp.setContentType("application/json; charset=UTF-8");
+                resp.getWriter().write("{\"ok\":true,\"password\":" + jsonStr(ac.generatePlayPassword()) + "}");
+                return;
+            case "end": {
+                String sid = req.getParameter("session");
+                String mid = req.getParameter("match");
+                if (sid != null && !sid.isBlank()) sm.killSession(sid);
+                else if (mid != null && !mid.isBlank()) sm.killMatch(mid);
+                else { ownerJson(resp, 400, "Nothing to end."); return; }
+                logger.info("Owner ended {} {}", sid != null ? "session" : "match", sid != null ? sid : mid);
+                ownerOk(resp, null);
+                return;
+            }
+            default:
+                ownerJson(resp, 404, "Unknown action.");
+        }
+    }
+
+    /** POSTs that change owner state must come from a page served by this gateway. */
+    private static boolean isSameOrigin(HttpServletRequest req) {
+        String origin = req.getHeader("Origin");
+        if (origin == null) return true;            // same-origin GET-style tools; cookie is SameSite=Strict anyway
+        String host = req.getHeader("Host");
+        try {
+            String authority = java.net.URI.create(origin).getRawAuthority();
+            return authority != null && host != null && authority.equalsIgnoreCase(host);
+        } catch (IllegalArgumentException e) {
             return false;
         }
-        return true;
+    }
+
+    private static String ownerCookie(HttpServletRequest req) {
+        jakarta.servlet.http.Cookie[] cookies = req.getCookies();
+        if (cookies == null) return null;
+        for (jakarta.servlet.http.Cookie c : cookies) {
+            if (OWNER_COOKIE.equals(c.getName())) return c.getValue();
+        }
+        return null;
+    }
+
+    // Written by hand: Servlet 5 Cookie has no SameSite attribute.
+    private static void setOwnerCookie(HttpServletRequest req, HttpServletResponse resp, String token) {
+        resp.addHeader("Set-Cookie", OWNER_COOKIE + "=" + token + "; Path=/system/doom; Max-Age="
+            + AccessControl.ownerSessionSeconds() + "; HttpOnly; SameSite=Strict" + (req.isSecure() ? "; Secure" : ""));
+    }
+
+    private static void clearOwnerCookie(HttpServletRequest req, HttpServletResponse resp) {
+        resp.addHeader("Set-Cookie", OWNER_COOKIE + "=; Path=/system/doom; Max-Age=0; HttpOnly; SameSite=Strict"
+            + (req.isSecure() ? "; Secure" : ""));
+    }
+
+    private static void ownerOk(HttpServletResponse resp, String warning) throws IOException {
+        resp.setContentType("application/json; charset=UTF-8");
+        resp.getWriter().write(warning == null ? "{\"ok\":true}" : "{\"ok\":true,\"warning\":" + jsonStr(warning) + "}");
+    }
+
+    private static void ownerJson(HttpServletResponse resp, int status, String error) throws IOException {
+        resp.setStatus(status);
+        resp.setContentType("application/json; charset=UTF-8");
+        resp.getWriter().write("{\"error\":" + jsonStr(error) + "}");
+    }
+
+    private static String jsonStr(String s) {
+        if (s == null) return "null";
+        StringBuilder b = new StringBuilder("\"");
+        for (char c : s.toCharArray()) {
+            switch (c) {
+                case '"':  b.append("\\\""); break;
+                case '\\': b.append("\\\\"); break;
+                case '<':  b.append("\\u003c"); break;
+                default:
+                    if (c < 0x20) b.append(String.format("\\u%04x", (int) c)); else b.append(c);
+            }
+        }
+        return b.append('"').toString();
     }
 
     // ── /play — session creation/resume ──────────────────────────────────────
@@ -310,7 +542,7 @@ public class DoomInputServlet extends HttpServlet {
             resp.setContentType("text/html; charset=UTF-8");
             resp.getWriter().write(buildErrorPage("WAD not found",
                 "The WAD file '" + escapeHtml(wadName) + "' was not found on the server. "
-                + "Available WADs must be in " + SessionManager.WAD_DIR));
+                + "Available WADs must be in " + sm.getWadDir()));
             return;
         } catch (Exception e) {
             resp.setStatus(500);
@@ -332,212 +564,6 @@ public class DoomInputServlet extends HttpServlet {
         resp.setContentType("text/html; charset=UTF-8");
         resp.setHeader("Cache-Control", "no-cache");
         resp.getWriter().write(DoomPlayPage.getHTML(sessionId, wadName));
-    }
-
-    // ── /admin  ───────────────────────────────────────────────────────────────
-
-    private void serveAdminPage(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        SessionManager sm = GatewayHook.getSessionManager();
-        if (sm == null) {
-            resp.setStatus(503);
-            resp.getWriter().write("DOOM module not initialized");
-            return;
-        }
-        String token = req.getParameter("token");
-        if (!sm.validateAdminToken(token)) {
-            resp.setStatus(403);
-            resp.setContentType("text/html; charset=UTF-8");
-            resp.getWriter().write(buildAdminForbiddenPage());
-            return;
-        }
-        String killedId    = req.getParameter("killed");
-        String regenDone   = req.getParameter("regen");
-        String configSaved = req.getParameter("configSaved");
-        resp.setContentType("text/html; charset=UTF-8");
-        resp.setHeader("Cache-Control", "no-cache, no-store");
-        resp.getWriter().write(buildAdminPage(sm, token, killedId, regenDone != null, configSaved != null));
-    }
-
-    private void serveAdminConfig(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        SessionManager sm = GatewayHook.getSessionManager();
-        if (sm == null) { resp.setStatus(503); return; }
-        String token = req.getParameter("token");
-        if (!sm.validateAdminToken(token)) {
-            resp.setStatus(403);
-            resp.setContentType("text/html; charset=UTF-8");
-            resp.getWriter().write(buildAdminForbiddenPage());
-            return;
-        }
-        String maxStr = req.getParameter("maxSessions");
-        if (maxStr != null) {
-            try {
-                SessionManager.setMaxSessions(Integer.parseInt(maxStr.trim()));
-            } catch (NumberFormatException e) {
-                resp.setStatus(400);
-                resp.getWriter().write("Invalid maxSessions value");
-                return;
-            }
-        }
-        resp.sendRedirect("/system/doom/admin?token=" + token + "&configSaved=1");
-    }
-
-    private void serveAdminRegen(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        SessionManager sm = GatewayHook.getSessionManager();
-        if (sm == null) { resp.setStatus(503); return; }
-        String token = req.getParameter("token");
-        if (!sm.validateAdminToken(token)) {
-            resp.setStatus(403);
-            resp.setContentType("text/html; charset=UTF-8");
-            resp.getWriter().write(buildAdminForbiddenPage());
-            return;
-        }
-        sm.regeneratePlayPassword();
-        resp.sendRedirect("/system/doom/admin?token=" + token + "&regen=1");
-    }
-
-    private void serveAdminKill(HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        SessionManager sm = GatewayHook.getSessionManager();
-        if (sm == null) {
-            resp.setStatus(503);
-            resp.getWriter().write("DOOM module not initialized");
-            return;
-        }
-        String token = req.getParameter("token");
-        if (!sm.validateAdminToken(token)) {
-            resp.setStatus(403);
-            resp.setContentType("text/html; charset=UTF-8");
-            resp.getWriter().write(buildAdminForbiddenPage());
-            return;
-        }
-        String sessionId = req.getParameter("session");
-        if (sessionId == null || sessionId.isBlank()) {
-            resp.setStatus(400);
-            resp.getWriter().write("Missing ?session= parameter");
-            return;
-        }
-        sm.killSession(sessionId);
-        logger.info("Admin terminated session: {}", sessionId);
-        // Redirect back to admin page with a notice
-        resp.sendRedirect("/system/doom/admin?token=" + token + "&killed=" + escUrl(sessionId));
-    }
-
-    private String buildAdminPage(SessionManager sm, String token, String killedId, boolean regenDone, boolean configSaved) {
-        long uptimeSec = sm.getUptimeSec();
-        long uptimeMin = uptimeSec / 60;
-        long uptimeHr  = uptimeMin / 60;
-        java.util.List<DoomSession> active = sm.getActiveSessions();
-
-        StringBuilder h = new StringBuilder();
-        h.append("<!DOCTYPE html><html><head><title>Ignition DOOM \u2013 Session Admin</title><style>\n");
-        h.append("*{box-sizing:border-box}\n");
-        h.append("body{background:#0d0d0d;color:#c8c8c8;font-family:'Courier New',monospace;padding:24px;margin:0}\n");
-        // Header: flex column — row1: logo+title, row2: attribution
-        h.append(".header{display:flex;flex-direction:column;border-bottom:1px solid #333;padding-bottom:14px;margin-bottom:6px}\n");
-        h.append(".header-row{display:flex;align-items:center;gap:14px}\n");
-        h.append(".header-logo{height:120px;width:auto;border-radius:3px;opacity:0.92}\n");
-        h.append(".header-text{display:flex;flex-direction:column;justify-content:center}\n");
-        h.append(".header-title{color:#ff4444;font-size:28px;font-weight:bold;text-transform:uppercase;letter-spacing:6px;line-height:1;margin:0 0 6px 0}\n");
-        h.append(".header-desc{color:#999;font-size:12px;letter-spacing:2px;text-transform:uppercase}\n");
-        h.append(".stats{color:#999;font-size:12px;margin-bottom:20px;margin-top:8px}\n");
-        h.append(".notice{color:#ffff44;background:#332200;border:1px solid #664400;padding:7px 14px;margin-bottom:16px;font-size:13px;display:inline-block}\n");
-        h.append("table{border-collapse:collapse;width:100%}\n");
-        h.append("th{color:#ff4444;text-align:left;padding:8px 14px;border-bottom:2px solid #ff4444;text-transform:uppercase;letter-spacing:2px;font-size:11px}\n");
-        h.append("td{padding:8px 14px;border-bottom:1px solid #282828;font-size:13px;vertical-align:middle}\n");
-        h.append("tr:hover td{background:#141414}\n");
-        h.append(".wad{color:#ffcc00}\n");
-        h.append(".sid{color:#99aacc;font-size:11px;word-break:break-all}\n");
-        h.append(".idle{color:#aaa}\n");
-        h.append(".kill-link{background:#6b0000;color:#ffaaaa;border:1px solid #aa0000;padding:4px 14px;text-decoration:none;font-size:11px;letter-spacing:1px;text-transform:uppercase}\n");
-        h.append(".kill-link:hover{background:#cc0000;color:#fff}\n");
-        h.append(".empty{color:#888;padding:24px 14px}\n");
-        h.append(".refresh{color:#777;font-size:12px;text-decoration:none;margin-left:16px}\n");
-        h.append(".refresh:hover{color:#aaa}\n");
-        h.append(".regen-btn{background:#1a1a00;color:#ffcc00;border:1px solid #665500;padding:4px 12px;font-family:'Courier New',monospace;font-size:11px;letter-spacing:1px;text-transform:uppercase;cursor:pointer;margin-left:12px}\n");
-        h.append(".regen-btn:hover{background:#332200;color:#ffe066}\n");
-        h.append("</style></head><body>\n");
-
-        // Header block
-        h.append("<div class='header'>\n");
-        h.append("  <div class='header-row'>\n");
-        h.append("    <img class='header-logo' src='/system/doom/static/doom-logo.png' alt='DOOM'>\n");
-        h.append("    <div class='header-text'>\n");
-        h.append("      <div class='header-title'>Ignition DOOM</div>\n");
-        h.append("      <div class='header-desc'>Session Manager</div>\n");
-        h.append("    </div>\n");
-        h.append("  </div>\n");
-        h.append("</div>\n");
-
-        // Credentials info
-        if (regenDone) {
-            h.append("<div class='notice'>Play password regenerated. All existing browser tokens have been revoked.</div><br>\n");
-        }
-        if (configSaved) {
-            h.append("<div class='notice'>Configuration saved.</div><br>\n");
-        }
-        h.append("<div class='stats' style='margin-bottom:8px;display:flex;align-items:center;gap:0'>")
-         .append("<span style='color:#888'>Play password:</span>&nbsp;")
-         .append("<code style='color:#ffcc00;letter-spacing:2px'>").append(escHtml(sm.getPlayPassword())).append("</code>")
-         .append("<form method='POST' action='/system/doom/admin/regen?token=").append(escHtml(token)).append("' style='display:inline;margin:0'>")
-         .append("<button type='submit' class='regen-btn'>Regenerate</button>")
-         .append("</form>")
-         .append("</div>\n");
-
-        // Stats bar
-        h.append("<div class='stats'>Active: ").append(active.size()).append(" / ").append(SessionManager.getMaxSessions());
-        h.append("&nbsp;&nbsp;|&nbsp;&nbsp;Uptime: ");
-        if (uptimeHr > 0) h.append(uptimeHr).append("h ");
-        h.append(uptimeMin % 60).append("m ").append(uptimeSec % 60).append("s");
-        h.append("&nbsp;&nbsp;");
-        h.append("<a class='refresh' href='/system/doom/admin?token=").append(escHtml(token)).append("'>[Refresh]</a>");
-        h.append("</div>\n");
-
-        if (killedId != null && !killedId.isBlank()) {
-            h.append("<div class='notice'>Session terminated: ").append(escHtml(killedId)).append("</div><br>\n");
-        }
-
-        // Max sessions config form
-        h.append("<div class='stats' style='margin-bottom:16px;display:flex;align-items:center;gap:0'>")
-         .append("<span style='color:#888'>Max sessions:</span>&nbsp;")
-         .append("<form method='GET' action='/system/doom/admin/config' style='display:inline;margin:0'>")
-         .append("<input type='hidden' name='token' value='").append(escHtml(token)).append("'>")
-         .append("<input type='number' name='maxSessions' value='").append(SessionManager.getMaxSessions()).append("'")
-         .append(" min='1' max='64' style='width:60px;background:#1a1a1a;color:#ffcc00;border:1px solid #555;")
-         .append("font-family:monospace;font-size:13px;padding:3px 6px;text-align:center'>")
-         .append("<button type='submit' class='regen-btn'>Apply</button>")
-         .append("</form>")
-         .append("</div>\n");
-
-        h.append("<table>\n");
-        h.append("<tr><th>Session ID</th><th>WAD</th><th>Idle</th><th>Uptime</th><th>Action</th></tr>\n");
-        if (active.isEmpty()) {
-            h.append("<tr><td class='empty' colspan='5'>No active sessions</td></tr>\n");
-        } else {
-            for (DoomSession s : active) {
-                long idleSec = s.getIdleMs() / 1000;
-                long upSec   = s.getUptimeMs() / 1000;
-                h.append("<tr>");
-                h.append("<td class='sid'>").append(escHtml(s.getSessionId())).append("</td>");
-                h.append("<td class='wad'>").append(escHtml(s.getWadName())).append("</td>");
-                h.append("<td class='idle'>").append(idleSec / 60).append("m ").append(idleSec % 60).append("s</td>");
-                h.append("<td class='idle'>").append(upSec / 60).append("m ").append(upSec % 60).append("s</td>");
-                h.append("<td><a class='kill-link' href='/system/doom/admin/kill?token=")
-                    .append(escHtml(token)).append("&session=").append(escHtml(s.getSessionId()))
-                    .append("'>Terminate</a></td>");
-                h.append("</tr>\n");
-            }
-        }
-        h.append("</table>\n");
-        h.append("</body></html>");
-        return h.toString();
-    }
-
-    private String buildAdminForbiddenPage() {
-        return "<!DOCTYPE html><html><head><title>DOOM Admin - Forbidden</title></head>"
-            + "<body style='background:#0d0d0d;color:#ff4444;font-family:monospace;padding:24px'>"
-            + "<h2>403 FORBIDDEN</h2><p>Valid admin token required.</p>"
-            + "<p style='color:#555;font-size:12px'>Find the token in the gateway log:<br>"
-            + "<code>grep 'Admin token' &lt;gateway-log&gt;</code></p>"
-            + "</body></html>";
     }
 
     private static String escHtml(String s) {
@@ -841,7 +867,7 @@ public class DoomInputServlet extends HttpServlet {
                 resp.getWriter().write("Static resource not found: " + fileName);
                 return;
             }
-            resp.setContentType("application/javascript; charset=UTF-8");
+            resp.setContentType(fileName.endsWith(".png") ? "image/png" : "application/javascript; charset=UTF-8");
             resp.setHeader("Cache-Control", "public, max-age=86400");
             byte[] data = is.readAllBytes();
             resp.setContentLength(data.length);
@@ -850,11 +876,13 @@ public class DoomInputServlet extends HttpServlet {
     }
 
     private void serveSoundfontFile(String sfName, HttpServletResponse resp) throws IOException {
-        if (sfName.isEmpty() || sfName.contains("..") || sfName.contains("/")) {
+        if (!isPlainFileName(sfName)) {
             resp.setStatus(HttpServletResponse.SC_BAD_REQUEST);
             return;
         }
-        File sfFile = new File(SOUNDFONTS_DIR, sfName);
+        File sfDir = assetDir("soundfonts");
+        if (sfDir == null) { resp.setStatus(503); return; }
+        File sfFile = new File(sfDir, sfName);
         if (!sfFile.exists() || !sfFile.isFile()) {
             resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
             return;
@@ -875,8 +903,8 @@ public class DoomInputServlet extends HttpServlet {
         }
         // Discover branding image files from the filesystem directory
         List<String> brandingFiles = new ArrayList<>();
-        File brandingDir = new File(BRANDING_DIR);
-        if (brandingDir.isDirectory()) {
+        File brandingDir = assetDir("branding");
+        if (brandingDir != null && brandingDir.isDirectory()) {
             File[] files = brandingDir.listFiles();
             if (files != null) {
                 for (File f : files) {
@@ -900,11 +928,13 @@ public class DoomInputServlet extends HttpServlet {
     }
 
     private void serveBrandingFile(String fileName, HttpServletResponse resp) throws IOException {
-        if (fileName.isEmpty() || fileName.contains("..") || fileName.contains("/")) {
+        if (!isPlainFileName(fileName)) {
             resp.setStatus(HttpServletResponse.SC_BAD_REQUEST);
             return;
         }
-        File f = new File(BRANDING_DIR, fileName);
+        File brandingDir = assetDir("branding");
+        if (brandingDir == null) { resp.setStatus(503); return; }
+        File f = new File(brandingDir, fileName);
         if (!f.exists() || !f.isFile()) {
             resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
             return;
@@ -1255,7 +1285,7 @@ public class DoomInputServlet extends HttpServlet {
             resp.setStatus(404);
             resp.setContentType("text/html; charset=UTF-8");
             resp.getWriter().write(buildErrorPage("WAD not found",
-                "WAD '" + escapeHtml(wadName) + "' not found in " + SessionManager.WAD_DIR));
+                "WAD '" + escapeHtml(wadName) + "' not found in " + sm.getWadDir()));
             return;
         } catch (Exception e) {
             resp.setStatus(500);
@@ -1288,7 +1318,8 @@ public class DoomInputServlet extends HttpServlet {
      */
     private void serveMatchJoin(HttpServletRequest req, HttpServletResponse resp)
             throws IOException {
-        if (!checkPlayAuth(req, resp)) return;
+        // No play-password check: joining an existing match needs only its match ID.
+        // (Starting single-player and creating matches still require the password, if set.)
         String sessionId = req.getParameter("session");
         String matchId   = req.getParameter("match");
         String wadName   = req.getParameter("wad");

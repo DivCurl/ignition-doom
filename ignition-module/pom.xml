@@ -7,7 +7,7 @@
 
     <groupId>com.doom.perspective</groupId>
     <artifactId>doom-perspective-parent</artifactId>
-    <version>0.9.8</version>
+    <version>1.0.0</version>
     <packaging>pom</packaging>
 
     <name>DOOM Perspective Module</name>
