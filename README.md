@@ -4,6 +4,8 @@ Running DOOM natively inside Inductive Automation Ignition Perspective, with ser
 
 This project sprouted suddenly and quite humbly into life while pondering over general low-level rendering capabilities in Ignition Perspective, and quickly became an obsession-driven side project while trying (and failing) to decompress from the daily grind — as more dirt was shoveled away to expose something... delightfully hellish. As a 90s kid, the original Doom holds a very special place in my heart for exposing my fragile but curious brain to the magic of computers. Later, I came to admire the craftsmanship, creativity, and raw engineering talent of the id Software team of that era with equal amounts of awe and respect. I therefore must dedicate each hour spent on this to the original id Software team, without whom none of this would be possible.
 
+Provided as-is; see the [Disclaimer](#disclaimer) before installing.
+
 ---
 
 ## Contents
@@ -12,7 +14,7 @@ This project sprouted suddenly and quite humbly into life while pondering over g
   [Compatibility](#compatibility)
 - [Documentation](#documentation): [Building](docs/building.md) · [Deployment](docs/deployment.md) ·
   [Architecture](docs/architecture.md)
-- [References](#references) · [License](#license) · [Credits](#credits)
+- [References](#references) · [Disclaimer](#disclaimer) · [License](#license) · [Credits](#credits)
 
 ---
 
@@ -136,6 +138,16 @@ Several community PWADs have been verified.
 
 ---
 
+## Disclaimer
+
+DOOM for Ignition Perspective is a hobby project, provided "as is", without warranty of any kind,
+as set out in sections 15 and 16 of the GNU GPL. It runs inside the gateway's own Java process and
+shares its CPU and memory with everything else the gateway does. Install and use it at your own
+risk, and not on a gateway that runs production processes or safety systems. The author is not
+liable for downtime, data loss or any other damage arising from its use.
+
+---
+
 ## License
 
 GNU General Public License v3 or later. See [LICENSE](LICENSE) for the full text.
@@ -146,8 +158,8 @@ This project incorporates [Mocha DOOM](https://github.com/GoodSign2017/mochadoom
 FluidR3_GM soundfont: Creative Commons Attribution 3.0. See [CREDITS.md](CREDITS.md) for full
 attribution.
 
-This project is not affiliated with or endorsed by Inductive Automation.
-"Ignition" is a trademark of Inductive Automation, Inc.
+This project is not affiliated with or endorsed by Inductive Automation or id Software.
+"Ignition" is a trademark of Inductive Automation, Inc. "DOOM" is a trademark of id Software LLC.
 
 ## Credits
 
